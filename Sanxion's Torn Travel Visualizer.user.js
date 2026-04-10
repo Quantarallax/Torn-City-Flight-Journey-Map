@@ -5,8 +5,8 @@
 // @description  Travel map with custom rotating flight messages
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/loader.php?sid=travel*
-// @updateURL    https://github.com/Quantarallax/Torn-City-Stock-Ticker-Highlighter/raw/refs/heads/main/Sanxion's%20Stock%20Highlighter.user.js
-// @downloadURL  https://github.com/Quantarallax/Torn-City-Stock-Ticker-Highlighter/raw/refs/heads/main/Sanxion's%20Stock%20Highlighter.user.js
+// @updateURL    https://github.com/Quantarallax/Torn-City-Flight-Journey-Map/raw/refs/heads/main/Sanxion's%20Torn%20Travel%20Visualizer.user.js
+// @downloadURL  https://github.com/Quantarallax/Torn-City-Flight-Journey-Map/raw/refs/heads/main/Sanxion's%20Torn%20Travel%20Visualizer.user.js
 // @grant        none
 // ==/UserScript==
 
