@@ -1,145 +1,1444 @@
 // ==UserScript==
-// @name         Sanxion's Torn Travel Visualizer - Radio Chatter Edition
-// @namespace    sanxion.tc.flightjourneymap
-// @version      1.3
-// @description  Travel map with custom rotating flight messages
+// @name         TORN CITY Flight Visualiser
+// @namespace    sanxion.tc.flightvisualiser
+// @version      7.0.0
+// @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/page.php?sid=travel*
 // @updateURL    https://github.com/Quantarallax/Torn-City-Flight-Journey-Map/raw/refs/heads/main/Sanxion's%20Torn%20Travel%20Visualizer.user.js
 // @downloadURL  https://github.com/Quantarallax/Torn-City-Flight-Journey-Map/raw/refs/heads/main/Sanxion's%20Torn%20Travel%20Visualizer.user.js
-// @grant        none
+// @connect      api.torn.com
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_addStyle
+// @grant        GM_xmlhttpRequest
+// @run-at       document-end
 // ==/UserScript==
 
-(function() {
-    'use strict';
+(function () {
+  'use strict';
 
-    // --- CONFIGURATION ---
-    const flightMessages = [
-        "This is a test message",
-        "This is test message 2",
-        "Checking coordinates with ground control...",
-        "Fuel levels look good for the trip.",
-        "Cruising at 35,000 feet."
-    ];
+  /* ─────────────────────────────────────────────────────────────
+     DESTINATIONS  (Torn City canon names — no "New York")
+  ───────────────────────────────────────────────────────────── */
 
-    const locations = {
-        "Torn City": { x: 250, y: 120 },
-        "Mexico": { x: 170, y: 180, std: 1560, air: 1080, bus: 468 },
-        "Cayman Islands": { x: 210, y: 180, std: 2100, air: 1500, bus: 630 },
-        "Canada": { x: 180, y: 90, std: 2460, air: 1740, bus: 738 },
-        "Hawaii": { x: 50, y: 190, std: 8040, air: 5640, bus: 2412 },
-        "United Kingdom": { x: 470, y: 85, std: 9540, air: 6660, bus: 2862 },
-        "Argentina": { x: 280, y: 350, std: 11340, air: 7980, bus: 3402 },
-        "Switzerland": { x: 495, y: 105, std: 10140, air: 7080, bus: 3042 },
-        "Japan": { x: 850, y: 140, std: 12180, air: 8520, bus: 3654 },
-        "China": { x: 750, y: 150, std: 13140, air: 9180, bus: 3942 },
-        "UAE": { x: 600, y: 170, std: 16260, air: 11400, bus: 4878 },
-        "South Africa": { x: 530, y: 320, std: 18660, air: 13020, bus: 5598 }
+  const MAP_W = 1000;
+  const MAP_H = 500;
+
+  const DESTS = {
+    torn: { label:'Torn City', country:'USA', city:'Torn City', lat:40.71, lon:-74.01, col:'#ff4444' },
+    mexico: { label:'Mexico', country:'Mexico', city:'Ciudad Juarez', lat:31.73, lon:-106.49, col:'#ff8800' },
+    caymans: { label:'Cayman Islands', country:'Cayman Islands', city:'George Town', lat:19.30, lon:-81.37, col:'#ffcc00' },
+    canada: { label:'Canada', country:'Canada', city:'Toronto', lat:43.65, lon:-79.38, col:'#ff44cc' },
+    hawaii: { label:'Hawaii', country:'USA', city:'Honolulu', lat:21.31, lon:-157.83, col:'#00ffcc' },
+    uk: { label:'United Kingdom', country:'United Kingdom', city:'London', lat:51.51, lon:-0.13, col:'#4488ff' },
+    argentina: { label:'Argentina', country:'Argentina', city:'Buenos Aires', lat:-34.61, lon:-58.38, col:'#44ffaa' },
+    switzerland: { label:'Switzerland', country:'Switzerland', city:'Zurich', lat:47.38, lon:8.54, col:'#aa44ff' },
+    japan: { label:'Japan', country:'Japan', city:'Tokyo', lat:35.69, lon:139.69, col:'#ff4488' },
+    china: { label:'China', country:'China', city:'Beijing', lat:39.91, lon:116.39, col:'#ff8844' },
+    uae: { label:'UAE', country:'United Arab Emirates', city:'Dubai', lat:25.20, lon:55.27, col:'#44ccff' },
+    southafrica: { label:'South Africa', country:'South Africa', city:'Johannesburg', lat:-26.20, lon:28.04, col:'#88ff44' },
+  };
+
+  /* ─────────────────────────────────────────────────────────────
+     BASE DURATIONS ms (standard ticket)
+  ───────────────────────────────────────────────────────────── */
+
+  const BASE_DUR = {
+    torn_mexico:5400000, torn_caymans:4500000, torn_canada:2700000, torn_hawaii:14400000,
+    torn_uk:10800000, torn_argentina:14400000, torn_switzerland:12600000,
+    torn_japan:25200000, torn_china:25200000, torn_uae:21600000, torn_southafrica:25200000,
+  };
+
+  /* ─────────────────────────────────────────────────────────────
+     TICKET TYPES  (per Torn City wiki)
+     Standard    = Jumbo Jet   (max alt 32,000 ft)
+     Business    = Jumbo Jet   (max alt 32,000 ft)
+     Private     = Private Plane (max alt 32,000 ft)
+     Airstrip    = Private Plane single-prop (max alt 12,000 ft)
+  ───────────────────────────────────────────────────────────── */
+
+  const TICKETS = {
+    standard: { label:'Standard', plane:'jumbo', mult:1.00, fuel:42000, speed:545, maxAlt:32000, col:'#aaaaaa' },
+    business: { label:'Business Class', plane:'jumbo', mult:1.15, fuel:47000, speed:575, maxAlt:32000, col:'#4488ff' },
+    private: { label:'Private Plane', plane:'private_plane', mult:1.80, fuel:18000, speed:480, maxAlt:32000, col:'#ff6644' },
+    airstrip: { label:'Airstrip', plane:'prop_plane', mult:1.60, fuel:6000, speed:180, maxAlt:12000, col:'#88ff44' },
+  };
+
+  /* ─────────────────────────────────────────────────────────────
+     FLIGHT PHASES
+  ───────────────────────────────────────────────────────────── */
+
+  const PHASE_CFG = {
+    ready: { label:'READY', col:'#6699aa' },
+    takeoff: { label:'TAKE-OFF', col:'#ffcc44' },
+    inflight: { label:'IN FLIGHT', col:'#44ccff' },
+    descent: { label:'DESCENT', col:'#ffaa44' },
+    landing: { label:'LANDING', col:'#ff8844' },
+    arrived: { label:'LANDED', col:'#44ff88' },
+  };
+
+  const WEATHER = ['clear skies','partly cloudy','overcast','light rain','warm and humid','cool and breezy','sunny with light winds','scattered showers'];
+  const rndW = () => WEATHER[Math.floor(Math.random() * WEATHER.length)];
+
+  /* ─────────────────────────────────────────────────────────────
+     COMMENTARY  (keyed by phase; each fn(params)->string)
+     No duplicates — each phase fires exactly once per flight.
+  ───────────────────────────────────────────────────────────── */
+
+  // Fixed inflight messages — always shown (in order at start/end of inflight)
+  const INFLIGHT_FIXED_START = [
+    p => `Levelling off at ${p.maxAlt.toLocaleString()} feet. Weather good. All clear.`,
+    () => 'Seat belt sign has been turned off.',
+  ];
+  const INFLIGHT_FIXED_END = [
+    p => `Cruising at ${p.speed} mph. Estimated arrival: ${p.eta}.`,
+    p => `Arrival time about ${p.arrivalTime}.`,
+  ];
+  // Random pool — a subset is picked each flight and spread across the inflight period
+  const INFLIGHT_RANDOM = [
+    () => 'A baby starts crying across the aisle.',
+    () => 'Chedburn flies past.',
+    p => `${p.name}'s seat gets constantly kicked from behind by a small child.`,
+    () => 'A couple a few rows back start fighting each other.',
+    () => "Someone starts shouting, 'I'm sick of these m*fucking snakes on this m*fucking plane.'",
+    () => 'Outside the window, a shadowy figure smashes up the wing.',
+    () => 'A Canadian guy stares wide-eyed at the destruction to the wing.',
+    () => 'WARNING: Flight proximity alert!',
+    () => 'ATC stand by, unsure of error reason.',
+    () => 'A jet flies past, upside down.',
+  ];
+
+  const COMMENTARY = {
+    ready: [
+      p => `${p.name} requesting clearance for take-off from ${p.src} Airport.`,
+      p => `Preflight checks confirmed. Welcome aboard, ${p.name}.`,
+      p => `Destination: ${p.dst}. Estimated flight time: ${p.eta}.`,
+    ],
+    takeoff: [
+      p => `ATC: ${p.name}, you are cleared for take-off. Runway 1C. Proceed.`,
+      () => 'Increasing speed, throttle engaged.',
+      p => `Climbing to ${p.maxAlt.toLocaleString()} feet.`,
+    ],
+    turbulence: [
+      () => 'Slight turbulence — nothing to worry about.',
+    ],
+    descent: [
+      () => 'Cabin crew, prepare for descent.',
+      () => 'Miss Mile High Club pops her head up from behind a seat near the front.',
+      () => 'Someone honks up their in-flight meal.',
+      () => 'Ladies and gentlemen, please fasten your seat belts.',
+      p => `Weather in ${p.dst} is ${rndW()}. Have a nice day.`,
+      p => `${p.name} checks their weapons for plane disembarkation.`,
+    ],
+    landing: [
+      () => '*Screech of tyres on tarmac.*',
+      () => 'Slight turbulence, but not too bad.',
+      () => 'Yes, weapons look good and oiled.',
+    ],
+    arrived: [
+      p => `Arrival confirmed at ${p.dst}.`,
+      p => p.isTornCity
+        ? 'Welcome to Torn City, please enjoy your stay, however long it will be. Stay safe. Thank you.'
+        : 'Remember: due to current circumstances, it is advisable to get your business done, and then leave the country. Thank you.',
+    ],
+    return_start: [
+      () => 'Refuel complete. Taxiing to runway. Have a nice flight.',
+      p => `ATC: ${p.name}, you are cleared for take-off. Runway 2A. Proceed.`,
+      () => 'Wheels up. Heading home.',
+    ],
+  };
+
+  /* ─────────────────────────────────────────────────────────────
+     STATE  — persisted via GM_setValue
+  ───────────────────────────────────────────────────────────── */
+
+  let S = {
+    src:'torn', dst:null, depTime:null, arrTime:null,
+    ticket:'standard', player:'Pilot', flying:false, isReturn:false,
+    prevPhase:'', phasesTriggered:{}, turbTriggered:false,
+    log:[], px:20, py:60, pw:680, ph_panel:520, min:false, page:'main', apiKey:'',
+    previewDst:null, inflightSchedule:null,
+  };
+
+  const saveS = () => {
+    try {
+      GM_setValue('tcfv_v3', JSON.stringify({
+        src:S.src, dst:S.dst, depTime:S.depTime, arrTime:S.arrTime,
+        ticket:S.ticket, player:S.player, flying:S.flying, isReturn:S.isReturn,
+        prevPhase:S.prevPhase, phasesTriggered:S.phasesTriggered, turbTriggered:S.turbTriggered,
+        log:S.log.slice(-30), px:S.px, py:S.py, pw:S.pw, ph_panel:S.ph_panel,
+        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule,
+      }));
+    } catch(e) {}
+  };
+
+  const loadS = () => {
+    try {
+      const r = GM_getValue('tcfv_v3', null);
+      if (r) Object.assign(S, JSON.parse(r));
+      if (!S.phasesTriggered) S.phasesTriggered = {};
+      if (!S.inflightSchedule) S.inflightSchedule = null;
+    } catch(e) {}
+  };
+
+  /* ─────────────────────────────────────────────────────────────
+     GEOMETRY
+  ───────────────────────────────────────────────────────────── */
+
+  const toXY = (lon, lat) => ({
+    x: ((lon + 180) / 360) * MAP_W,
+    y: ((90 - lat) / 180) * MAP_H,
+  });
+
+  const haversine = (a, b) => {
+    const R = 3958.8, r = Math.PI / 180;
+    const dLat = (b.lat - a.lat) * r, dLon = (b.lon - a.lon) * r;
+    const x = Math.sin(dLat/2)**2 + Math.cos(a.lat*r) * Math.cos(b.lat*r) * Math.sin(dLon/2)**2;
+    return Math.round(R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x)));
+  };
+
+  const getDur = (sk, dk, tk) => {
+    const b = BASE_DUR[`${sk}_${dk}`] || BASE_DUR[`${dk}_${sk}`] || 7200000;
+    return Math.round(b / (TICKETS[tk]?.mult || 1));
+  };
+
+  const buildBez = (sk, dk) => {
+    const s = toXY(DESTS[sk].lon, DESTS[sk].lat);
+    const d = toXY(DESTS[dk].lon, DESTS[dk].lat);
+    const sag = Math.abs(d.x - s.x) * 0.22 + Math.abs(d.y - s.y) * 0.08;
+    const c = { x:(s.x+d.x)/2, y:Math.max(8,(s.y+d.y)/2 - sag) };
+    return { s, d, c };
+  };
+
+  const bPt = (t, s, c, d) => ({
+    x: (1-t)**2*s.x + 2*(1-t)*t*c.x + t**2*d.x,
+    y: (1-t)**2*s.y + 2*(1-t)*t*c.y + t**2*d.y,
+  });
+
+  const bAng = (t, s, c, d) => Math.atan2(
+    2*(1-t)*(c.y-s.y) + 2*t*(d.y-c.y),
+    2*(1-t)*(c.x-s.x) + 2*t*(d.x-c.x)
+  ) * 180 / Math.PI;
+
+  /* ─────────────────────────────────────────────────────────────
+     FLIGHT CALCULATORS
+  ───────────────────────────────────────────────────────────── */
+
+  const getPhase = p => {
+    if (!S.flying) return 'ready';
+    if (p < 0.05) return 'takeoff';
+    if (p < 0.75) return 'inflight';
+    if (p < 0.90) return 'descent';
+    if (p < 0.98) return 'landing';
+    return 'arrived';
+  };
+
+  // timeLeftMs optional — when supplied, altitude drops to 0 at 60s before landing
+  const getAlt = (p, timeLeftMs) => {
+    const maxAlt = TICKETS[S.ticket]?.maxAlt || 32000;
+    if (!S.flying || p <= 0) return 0;
+    if (p < 0.05) return Math.round(maxAlt * (p / 0.05));
+    if (p < 0.75) return maxAlt;
+    if (timeLeftMs !== undefined && timeLeftMs <= 60000) return 0;
+    return Math.max(0, Math.round(maxAlt * (1 - (p - 0.75) / 0.23)));
+  };
+
+  const getSpd = (p, mx) => {
+    if (!S.flying || p <= 0) return 0;
+    if (p < 0.05) return Math.round(mx * (p / 0.05));
+    if (p < 0.90) return mx;
+    if (p < 0.98) return Math.round(mx * (1 - (p - 0.90) / 0.08));
+    return 0;
+  };
+
+  const getFuel = (p, tk) => Math.max(0, Math.round((TICKETS[tk]?.fuel || 42000) * (1 - Math.max(0, p))));
+
+  const fmtTime = ms => {
+    if (ms <= 0) return 'Arrived';
+    const s = Math.floor(ms/1000), h = Math.floor(s/3600), m = Math.floor((s%3600)/60), ss = s%60;
+    return h > 0 ? `${h}h ${String(m).padStart(2,'0')}m` : m > 0 ? `${m}m ${String(ss).padStart(2,'0')}s` : `${ss}s`;
+  };
+
+  /* ─────────────────────────────────────────────────────────────
+     MAP VIEWPORT ZOOM — zooms SVG viewBox to frame the route
+  ───────────────────────────────────────────────────────────── */
+
+  function getZoomedViewBox(sk, dk) {
+    if (!sk || !dk) return `0 0 ${MAP_W} ${MAP_H}`;
+    const s = toXY(DESTS[sk].lon, DESTS[sk].lat);
+    const d = toXY(DESTS[dk].lon, DESTS[dk].lat);
+    const pad = 90;
+    let minX = Math.min(s.x, d.x) - pad;
+    let maxX = Math.max(s.x, d.x) + pad;
+    let minY = Math.min(s.y, d.y) - pad;
+    let maxY = Math.max(s.y, d.y) + pad;
+    // Clamp to map bounds
+    minX = Math.max(0, minX);
+    minY = Math.max(0, minY);
+    maxX = Math.min(MAP_W, maxX);
+    maxY = Math.min(MAP_H, maxY);
+    // Maintain 2:1 aspect ratio of the svg viewport
+    const vw = maxX - minX, vh = maxY - minY;
+    if (vw / vh < 2) {
+      const extra = (vh * 2 - vw) / 2;
+      minX = Math.max(0, minX - extra);
+      maxX = Math.min(MAP_W, maxX + extra);
+    }
+    return `${minX.toFixed(0)} ${minY.toFixed(0)} ${(maxX-minX).toFixed(0)} ${(maxY-minY).toFixed(0)}`;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     SVG WORLD MAP  (detailed coastline polygons, equirectangular)
+  ───────────────────────────────────────────────────────────── */
+
+  function buildMapSVG() {
+    let dots = '';
+    for (const [key, d] of Object.entries(DESTS)) {
+      const { x, y } = toXY(d.lon, d.lat);
+      const right = x < MAP_W * 0.55, lx = right ? 12 : -12, anc = right ? 'start' : 'end';
+      dots += `<g id="tcfv-dot-${key}" class="dest-dot" transform="translate(${x.toFixed(1)},${y.toFixed(1)})">
+  <circle class="dot-glow" r="10" fill="${d.col}" opacity="0.08"/>
+  <circle class="dot-ring" r="5.5" fill="none" stroke="${d.col}" stroke-width="0.8" opacity="0.4"/>
+  <circle class="dot-core" r="3.5" fill="${d.col}" opacity="0.85"/>
+  <circle r="1.4" fill="#fff"/>
+  <text class="dot-lbl" x="${lx}" y="4" font-size="9" fill="${d.col}" text-anchor="${anc}" font-family="Courier New,monospace" opacity="0.7" style="pointer-events:none">${d.city}</text>
+</g>`;
+    }
+
+    return `<defs>
+  <radialGradient id="og" cx="50%" cy="45%" r="65%">
+    <stop offset="0%" stop-color="#0c2040"/>
+    <stop offset="100%" stop-color="#05101a"/>
+  </radialGradient>
+  <filter id="gl" x="-50%" y="-50%" width="200%" height="200%">
+    <feGaussianBlur stdDeviation="2.5" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <filter id="glb" x="-80%" y="-80%" width="260%" height="260%">
+    <feGaussianBlur stdDeviation="5" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <marker id="arr" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+    <path d="M0,0 L6,3 L0,6 Z" fill="rgba(255,255,255,0.5)"/>
+  </marker>
+</defs>
+<rect width="${MAP_W}" height="${MAP_H}" fill="url(#og)"/>
+<!-- Graticule -->
+<line x1="0" y1="${((90/180)*MAP_H).toFixed(0)}" x2="${MAP_W}" y2="${((90/180)*MAP_H).toFixed(0)}" stroke="#0d2035" stroke-width="1"/>
+<line x1="${(MAP_W/2).toFixed(0)}" y1="0" x2="${(MAP_W/2).toFixed(0)}" y2="${MAP_H}" stroke="#0d2035" stroke-width="0.6"/>
+<line x1="0" y1="${((66.5/180)*MAP_H).toFixed(0)}" x2="${MAP_W}" y2="${((66.5/180)*MAP_H).toFixed(0)}" stroke="#0c2a18" stroke-width="0.6" stroke-dasharray="6,6"/>
+<line x1="0" y1="${((113.5/180)*MAP_H).toFixed(0)}" x2="${MAP_W}" y2="${((113.5/180)*MAP_H).toFixed(0)}" stroke="#0c2a18" stroke-width="0.6" stroke-dasharray="6,6"/>
+<!-- ── NORTH AMERICA ── -->
+<polygon points="130,64 171,41 253,34 306,36 349,45 388,65 391,89 376,114 360,137 370,170 348,208 318,235 289,255 260,272 232,260 203,235 175,215 149,185 130,143 119,105" fill="#1a4418" stroke="#2a6030" stroke-width="1.2"/>
+<!-- Alaska -->
+<polygon points="34,64 87,47 114,59 107,82 67,91 29,81" fill="#1a4418" stroke="#2a6030" stroke-width="0.8"/>
+<!-- Aleutians (simplified) -->
+<ellipse cx="20" cy="105" rx="18" ry="4" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
+<!-- Greenland -->
+<polygon points="334,23 383,15 411,33 398,64 352,71 329,51" fill="#22503a" stroke="#2e6c40" stroke-width="0.8"/>
+<!-- Baja + Central America -->
+<polygon points="170,174 193,196 185,238 165,254 148,225 163,190" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<polygon points="218,235 253,258 246,279 228,285 204,266 200,245" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<!-- Caribbean islands -->
+<ellipse cx="294" cy="240" rx="17" ry="7" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
+<ellipse cx="256" cy="248" rx="7" ry="4" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- ── SOUTH AMERICA ── -->
+<polygon points="237,254 280,242 338,249 373,277 385,326 367,380 338,412 296,420 261,398 242,350 234,303" fill="#1a4418" stroke="#2a6030" stroke-width="1.2"/>
+<polygon points="237,254 266,244 271,262 251,269 234,264" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- Falkland Islands -->
+<ellipse cx="289" cy="415" rx="9" ry="5" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- ── EUROPE ── -->
+<polygon points="444,60 483,46 530,41 573,50 602,64 608,84 587,101 556,111 516,107 480,97 447,82" fill="#1a4418" stroke="#2a6030" stroke-width="1"/>
+<polygon points="444,82 481,77 484,115 461,129 435,110" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<!-- Scandinavia -->
+<polygon points="491,42 523,28 561,34 570,50 548,60 506,58" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<!-- British Isles -->
+<polygon points="454,67 482,60 489,80 474,88 452,81" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<ellipse cx="462" cy="58" rx="10" ry="6" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- Italy -->
+<polygon points="519,101 539,95 545,116 536,138 521,141 513,123" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
+<!-- Iberian Peninsula -->
+<polygon points="444,82 480,76 486,116 461,129 434,111" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
+<!-- Greece -->
+<polygon points="573,102 590,97 588,115 574,118 565,109" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- ── AFRICA ── -->
+<polygon points="470,143 524,131 602,130 659,155 683,200 666,257 628,302 587,335 540,351 496,325 469,283 462,236 469,188" fill="#1a4418" stroke="#2a6030" stroke-width="1.2"/>
+<!-- Horn of Africa -->
+<polygon points="659,207 689,199 695,228 668,237 649,222" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<!-- Madagascar -->
+<polygon points="622,294 643,285 651,317 634,330 614,313" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<!-- ── MIDDLE EAST ── -->
+<polygon points="590,139 671,130 713,148 723,193 692,217 642,210 604,185" fill="#1a4418" stroke="#2a6030" stroke-width="0.8"/>
+<!-- Turkey -->
+<polygon points="578,103 647,94 668,109 663,129 598,136 572,120" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<!-- ── ASIA ── -->
+<polygon points="575,46 697,29 822,33 905,50 933,90 928,131 892,156 875,178 834,189 780,185 740,148 694,140 639,145 614,136 584,119 578,88" fill="#1a4418" stroke="#2a6030" stroke-width="1.2"/>
+<!-- Indian Subcontinent -->
+<polygon points="656,147 722,140 750,162 745,231 710,248 676,229 649,190" fill="#1a4418" stroke="#2a6030" stroke-width="0.7"/>
+<ellipse cx="744" cy="246" rx="8" ry="11" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- SE Asia / Indochina -->
+<polygon points="736,148 793,139 820,164 797,197 757,201 736,178" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<!-- Malaysia / Indonesia (simplified) -->
+<polygon points="793,202 832,192 848,210 826,225 798,218" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
+<polygon points="836,220 877,215 890,234 862,244 838,235" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- Japan -->
+<polygon points="869,113 892,107 906,132 891,152 872,145" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<polygon points="888,96 907,91 918,110 904,118 887,112" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- Korean Peninsula -->
+<polygon points="841,115 858,109 862,133 848,139 837,128" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- Taiwan -->
+<polygon points="839,181 850,175 855,192 845,198" fill="#1a4418" stroke="#2a6030" stroke-width="0.3"/>
+<!-- Philippines (simplified) -->
+<ellipse cx="862" cy="196" rx="9" ry="14" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- ── AUSTRALIA ── -->
+<polygon points="782,285 875,264 933,286 941,334 904,361 851,375 789,350 770,313" fill="#1a4418" stroke="#2a6030" stroke-width="1.2"/>
+<!-- Tasmania -->
+<ellipse cx="875" cy="380" rx="12" ry="10" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- New Zealand -->
+<polygon points="934,338 952,328 958,352 945,362 930,353" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
+<polygon points="940,364 955,357 962,378 950,388 936,377" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- ── ANTARCTICA ── -->
+<rect x="0" y="${MAP_H - 24}" width="${MAP_W}" height="24" fill="#1a3a26" opacity="0.7"/>
+<!-- Dynamic layers (drawn on top of land) -->
+<g id="tcfv-pathg"></g>
+${dots}
+<g id="tcfv-planeg"></g>`;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     ANIMATED DASH OFFSET
+  ───────────────────────────────────────────────────────────── */
+
+  let dashAnimId = null;
+  let dashOffset = 0;
+
+  function startDashAnim() {
+    if (dashAnimId) cancelAnimationFrame(dashAnimId);
+    const step = () => {
+      dashOffset = (dashOffset + 0.4) % 20;
+      const polyline = document.getElementById('tcfv-route-line');
+      if (polyline) polyline.style.strokeDashoffset = -dashOffset;
+      dashAnimId = requestAnimationFrame(step);
+    };
+    dashAnimId = requestAnimationFrame(step);
+  }
+
+  function stopDashAnim() {
+    if (dashAnimId) { cancelAnimationFrame(dashAnimId); dashAnimId = null; }
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     DRAW FLIGHT PATH
+  ───────────────────────────────────────────────────────────── */
+
+  function drawPath(sk, dk) {
+    const g = document.getElementById('tcfv-pathg');
+    if (!g) return;
+    if (!sk || !dk || sk === dk) { g.innerHTML = ''; stopDashAnim(); return; }
+    const { s, d, c } = buildBez(sk, dk);
+    const pts = [];
+    for (let i = 0; i <= 120; i++) { const p = bPt(i/120, s, c, d); pts.push(`${p.x.toFixed(1)},${p.y.toFixed(1)}`); }
+    const col = TICKETS[S.ticket]?.col || '#fff';
+    g.innerHTML = `<polyline id="tcfv-route-line" points="${pts.join(' ')}" fill="none" stroke="${col}" stroke-width="2" stroke-dasharray="12,8" stroke-linecap="round" opacity="0.65"/>
+<circle cx="${s.x.toFixed(1)}" cy="${s.y.toFixed(1)}" r="5" fill="${DESTS[sk]?.col||'#fff'}" opacity="0.9" filter="url(#gl)"/>
+<circle cx="${d.x.toFixed(1)}" cy="${d.y.toFixed(1)}" r="5" fill="${DESTS[dk]?.col||'#fff'}" opacity="0.9" filter="url(#gl)"/>`;
+    startDashAnim();
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     DRAW PLANE  (SVG path shapes by ticket/plane type)
+  ───────────────────────────────────────────────────────────── */
+
+  function drawPlane(progress, sk, dk) {
+    const g = document.getElementById('tcfv-planeg');
+    if (!g) return;
+    if (!sk || !dk || sk === dk) { g.innerHTML = ''; return; }
+    const { s, d, c } = buildBez(sk, dk);
+    const t = Math.max(0.001, Math.min(0.999, progress));
+    const pos = bPt(t, s, c, d), ang = bAng(t, s, c, d);
+    const plane = TICKETS[S.ticket]?.plane || 'jumbo';
+
+    // White triangle on black circle — clean, visible against the map
+    // Different sizes and proportions per plane type
+    let svgShape;
+    if (plane === 'jumbo') {
+      // Large black circle, wide white triangle (jumbo spread)
+      svgShape = `
+  <circle r="10" fill="black" opacity="0.88"/>
+  <polygon points="0,-7 -5.5,5 5.5,5" fill="white"/>`;
+    } else if (plane === 'private_plane') {
+      // Medium black circle, slim white triangle (private jet)
+      svgShape = `
+  <circle r="8" fill="black" opacity="0.88"/>
+  <polygon points="0,-7 -3.5,5 3.5,5" fill="white"/>`;
+    } else {
+      // Small black circle, small blunt white triangle + prop tick (airstrip)
+      svgShape = `
+  <circle r="7" fill="black" opacity="0.88"/>
+  <polygon points="0,-5.5 -4,4 4,4" fill="white"/>
+  <line x1="-4" y1="-5.5" x2="4" y2="-5.5" stroke="white" stroke-width="1.5" stroke-linecap="round"/>`;
+    }
+
+    g.innerHTML = `<g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${ang.toFixed(1)})">
+  <g filter="url(#gl)">${svgShape}
+  </g>
+</g>`;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     HIGHLIGHT SELECTED DOTS
+  ───────────────────────────────────────────────────────────── */
+
+  function highlightDots(srcK, dstK) {
+    for (const key of Object.keys(DESTS)) {
+      const isSelected = key === srcK || key === dstK;
+      const dotG = document.getElementById(`tcfv-dot-${key}`);
+      if (!dotG) continue;
+      const core = dotG.querySelector('.dot-core');
+      const glow = dotG.querySelector('.dot-glow');
+      const lbl = dotG.querySelector('.dot-lbl');
+      const ring = dotG.querySelector('.dot-ring');
+      if (isSelected) {
+        if (core) { core.setAttribute('r','5'); core.setAttribute('opacity','1'); }
+        if (glow) { glow.setAttribute('r','16'); glow.setAttribute('opacity','0.28'); }
+        if (lbl) { lbl.setAttribute('opacity','1'); lbl.setAttribute('font-size','11'); lbl.setAttribute('font-weight','bold'); }
+        if (ring) { ring.setAttribute('opacity','1'); ring.setAttribute('stroke-width','1.4'); }
+      } else {
+        if (core) { core.setAttribute('r','3.5'); core.setAttribute('opacity','0.85'); }
+        if (glow) { glow.setAttribute('r','10'); glow.setAttribute('opacity','0.08'); }
+        if (lbl) { lbl.setAttribute('opacity','0.7'); lbl.setAttribute('font-size','9'); lbl.setAttribute('font-weight','normal'); }
+        if (ring) { ring.setAttribute('opacity','0.4'); ring.setAttribute('stroke-width','0.8'); }
+      }
+    }
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     ELEMENT CACHE
+  ───────────────────────────────────────────────────────────── */
+
+  let el = {};
+
+  /* ─────────────────────────────────────────────────────────────
+     STATS UPDATE
+  ───────────────────────────────────────────────────────────── */
+
+  function updateStats(progress, timeLeftMs) {
+    if (!el.status) return;
+    const phase = getPhase(progress);
+    const src = DESTS[S.src], dst = S.dst ? DESTS[S.dst] : (S.previewDst ? DESTS[S.previewDst] : null);
+    const tkt = TICKETS[S.ticket] || TICKETS.standard;
+    const totalDist = src && dst ? haversine(src, dst) : 0;
+    let distRem;
+    if (S.flying && timeLeftMs !== undefined && timeLeftMs <= 60000 && totalDist > 0) {
+      // Smoothly interpolate from ~5 miles down to 0 over final 60 seconds
+      distRem = Math.max(0, Math.round(5 * (timeLeftMs / 60000)));
+    } else if (S.flying && progress > 0 && progress < 1 && totalDist > 0) {
+      distRem = Math.round(totalDist * (1 - progress));
+    } else {
+      distRem = totalDist;
+    }
+    const ph = PHASE_CFG[phase] || PHASE_CFG.ready;
+
+    el.status.textContent = ph.label;
+    el.status.style.color = ph.col;
+    el.destname.textContent = dst ? `${dst.city}, ${dst.country}` : '—';
+    el.dist.textContent = totalDist > 0 ? `${distRem.toLocaleString()} mi` : '— mi';
+
+    const dstKey = S.flying ? S.dst : S.previewDst;
+    const srcKey = S.src;
+    const dur = (srcKey && dstKey) ? getDur(srcKey, dstKey, S.ticket) : 0;
+    el.eta.textContent = S.flying && timeLeftMs > 0 ? fmtTime(timeLeftMs) : (dur > 0 ? fmtTime(dur) : '—');
+
+    el.alt.textContent = `${getAlt(progress, timeLeftMs).toLocaleString()} ft`;
+    el.spd.textContent = `${getSpd(progress, tkt.speed)} mph`;
+    el.fuel.textContent = `${getFuel(Math.max(0, progress), S.ticket).toLocaleString()} lbs`;
+    el.tkt.textContent = tkt.label;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     COMMENTARY — fires once per phase, persists across refresh
+  ───────────────────────────────────────────────────────────── */
+
+  let phRunId = {};
+
+  function addLog(text) {
+    S.log.push(text);
+    if (S.log.length > 30) S.log.shift();
+    renderLog();
+  }
+
+  function renderLog() {
+    if (!el.log) return;
+    const lines = S.log.slice(-8);
+    el.log.innerHTML = lines.map((t, i) =>
+      `<div class="tl${i === lines.length-1 ? ' tln' : ''}">&rsaquo; ${t.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>`
+    ).join('');
+    el.log.scrollTop = el.log.scrollHeight;
+  }
+
+  // Fire commentary messages for a phase, staggered — only once per flight per phase
+  function triggerComm(phase, params) {
+    if (S.phasesTriggered[phase]) return; // already fired this phase this flight
+    S.phasesTriggered[phase] = true;
+    saveS();
+    const msgs = COMMENTARY[phase];
+    if (!msgs) return;
+    const rid = (phRunId[phase] = (phRunId[phase] || 0) + 1);
+    msgs.forEach((fn, i) => {
+      setTimeout(() => {
+        if (phRunId[phase] === rid) addLog(fn(params));
+      }, i * 3800);
+    });
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     FLIGHT LOOP
+  ───────────────────────────────────────────────────────────── */
+
+  /* ─────────────────────────────────────────────────────────────
+     INFLIGHT RANDOM SCHEDULER
+     Picks a random subset of funny messages and spaces them
+     evenly across the full inflight period. Persists to storage
+     so a page refresh shows the same messages without repeats.
+  ───────────────────────────────────────────────────────────── */
+
+  function buildInflightSchedule() {
+    if (S.inflightSchedule) return; // already built for this flight
+    const total = S.arrTime - S.depTime;
+    const inflightStart = S.depTime + total * 0.05;
+    const inflightEnd = S.depTime + total * 0.75;
+    const duration = inflightEnd - inflightStart;
+
+    // Pick 3–5 random messages from the pool (never more than pool size)
+    const poolSize = INFLIGHT_RANDOM.length;
+    const pickCount = Math.min(poolSize, 3 + Math.floor(Math.random() * 3));
+    const indices = Array.from({ length: poolSize }, (_, i) => i);
+    for (let i = indices.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [indices[i], indices[j]] = [indices[j], indices[i]];
+    }
+    const chosen = indices.slice(0, pickCount).sort((a, b) => a - b);
+
+    // Build schedule — fixed-start messages at beginning, random in middle, fixed-end near end
+    const schedule = [];
+    const fixedStartCount = INFLIGHT_FIXED_START.length;
+    const fixedEndCount = INFLIGHT_FIXED_END.length;
+    const totalSlots = fixedStartCount + pickCount + fixedEndCount;
+    const slotSize = duration / (totalSlots + 1);
+
+    let slot = 1;
+    // Fixed start messages
+    for (let i = 0; i < fixedStartCount; i++) {
+      schedule.push({ pool:'fixed_start', idx:i, fireAt: inflightStart + slotSize * slot, fired:false });
+      slot++;
+    }
+    // Random pool messages
+    for (const idx of chosen) {
+      schedule.push({ pool:'random', idx, fireAt: inflightStart + slotSize * slot, fired:false });
+      slot++;
+    }
+    // Fixed end messages
+    for (let i = 0; i < fixedEndCount; i++) {
+      schedule.push({ pool:'fixed_end', idx:i, fireAt: inflightStart + slotSize * slot, fired:false });
+      slot++;
+    }
+
+    S.inflightSchedule = schedule;
+    saveS();
+  }
+
+  let loopTmr = null;
+  let turbFired = false;
+
+  function startLoop() {
+    if (loopTmr) clearTimeout(loopTmr);
+    tick();
+  }
+
+  function tick() {
+    if (!S.flying || !S.dst) {
+      updateStats(0, 0);
+      loopTmr = setTimeout(tick, 2000);
+      return;
+    }
+
+    const now = Date.now();
+    const total = S.arrTime - S.depTime;
+    const elapsed = now - S.depTime;
+    const progress = Math.min(1, Math.max(0, elapsed / total));
+    const timeLeft = Math.max(0, S.arrTime - now);
+    const phase = getPhase(progress);
+    const altNow = getAlt(progress, timeLeft);
+
+    const arrDate = new Date(S.arrTime);
+    const arrivalTime = `${String(arrDate.getHours()).padStart(2,'0')}:${String(arrDate.getMinutes()).padStart(2,'0')}`;
+
+    const params = {
+      name: S.player,
+      src: DESTS[S.src]?.city || 'the airport',
+      dst: DESTS[S.dst]?.city || 'your destination',
+      eta: fmtTime(timeLeft),
+      speed: TICKETS[S.ticket]?.speed || 545,
+      maxAlt: TICKETS[S.ticket]?.maxAlt || 32000,
+      arrivalTime,
+      isTornCity: S.dst === 'torn',
     };
 
-    function getRemainingSeconds() {
-        const timerElem = document.querySelector('.msg-countdown') || document.querySelector('[class*="countdown"]');
-        if (!timerElem) return 300; // Default to 5 mins if not found yet
-        const parts = timerElem.innerText.split(':').map(Number);
-        if (parts.length < 3) return 300;
-        return (parts[0] * 3600) + (parts[1] * 60) + parts[2];
+    // Phase transition commentary (fires only once per phase)
+    // Note: 'landing' phase commentary is handled separately via landing_screech at 60s mark
+    // Note: 'inflight' phase is handled by the random scheduler below
+    // Note: 'arrived' phase is handled manually below to ensure messages are saved before state resets
+    if (phase !== S.prevPhase) {
+      S.prevPhase = phase;
+      if (phase !== 'landing' && phase !== 'inflight' && phase !== 'arrived') triggerComm(phase, params);
+      if (phase === 'inflight') {
+        // Mark as triggered so triggerComm won't double-fire, build schedule
+        S.phasesTriggered.inflight = true;
+        buildInflightSchedule();
+      }
+
+      if (phase === 'arrived') {
+        // Handle arrived manually: log all messages with staggered delays,
+        // then reset state ONLY after the last message has been logged and saved.
+        S.phasesTriggered.arrived = true;
+        const arrivedFns = COMMENTARY.arrived;
+        const capturedParams = Object.assign({}, params); // snapshot before any state change
+        arrivedFns.forEach((fn, i) => {
+          setTimeout(() => {
+            addLog(fn(capturedParams));
+            if (i === arrivedFns.length - 1) {
+              // All arrived messages are now in the log — safe to reset and save
+              const newSrc = S.dst;
+              S.flying = false;
+              S.src = newSrc;
+              S.dst = null;
+              S.phasesTriggered = {};
+              S.inflightSchedule = null;
+              turbFired = false;
+              saveS();
+              drawPath(null, null);
+              drawPlane(0, S.src, S.src);
+              highlightDots(S.src, null);
+              updateStats(0, 0);
+            }
+          }, i * 3800);
+        });
+        // Keep ticking slowly until state has fully reset
+        loopTmr = setTimeout(tick, arrivedFns.length * 3800 + 2500);
+        return;
+      }
     }
 
-    function renderMap() {
-        // Prevent double-loading
-        if (document.getElementById('gemini-map-container')) return;
-
-        const destName = document.querySelector('.travel-destination')?.innerText || "Cayman Islands";
-        const destData = locations[destName] || locations["Cayman Islands"];
-        const start = locations["Torn City"];
-        const end = { x: destData.x, y: destData.y };
-
-        // 1. Create Container
-        const mapContainer = document.createElement('div');
-        mapContainer.id = 'gemini-map-container';
-        mapContainer.style = "width: 100%; height: 380px; background: #000 url('https://www.torn.com/images/v2/travel/map_world.png') no-repeat center; background-size: cover; position: relative; margin: 20px 0; border: 2px solid #444; border-radius: 10px; z-index: 9999;";
-
-        // 2. SVG for Curved Path
-        const svgNS = "http://www.w3.org/2000/svg";
-        const svg = document.createElementNS(svgNS, "svg");
-        svg.setAttribute("width", "100%"); svg.setAttribute("height", "100%");
-        svg.style.position = "absolute";
-
-        const midX = (start.x + end.x) / 2;
-        const midY = Math.min(start.y, end.y) - 60;
-        const pathData = `M ${start.x} ${start.y} Q ${midX} ${midY} ${end.x} ${end.y}`;
-
-        const path = document.createElementNS(svgNS, "path");
-        path.setAttribute("d", pathData);
-        path.setAttribute("fill", "transparent");
-        path.setAttribute("stroke", "white");
-        path.setAttribute("stroke-dasharray", "6,4");
-        path.setAttribute("stroke-width", "2");
-        path.id = "flightPath";
-
-        // 3. Elements
-        const plane = document.createElement('div');
-        plane.innerHTML = '✈️';
-        plane.style = "position: absolute; font-size: 24px; z-index: 100;";
-
-        const msgBox = document.createElement('div');
-        msgBox.style = "position: absolute; bottom: 10px; left: 10px; background: rgba(0,0,0,0.8); color: #0f0; padding: 5px 15px; font-family: monospace; border: 1px solid #0f0; border-radius: 4px;";
-
-        const pinStart = document.createElement('div');
-        pinStart.style = `position: absolute; left: ${start.x-4}px; top: ${start.y-4}px; width: 8px; height: 8px; background: cyan; border-radius: 50%; box-shadow: 0 0 10px cyan;`;
-
-        const pinEnd = document.createElement('div');
-        pinEnd.style = `position: absolute; left: ${end.x-4}px; top: ${end.y-4}px; width: 8px; height: 8px; background: red; border-radius: 50%; box-shadow: 0 0 10px red;`;
-
-        // Assemble
-        svg.appendChild(path);
-        mapContainer.appendChild(svg);
-        mapContainer.appendChild(pinStart);
-        mapContainer.appendChild(pinEnd);
-        mapContainer.appendChild(plane);
-        mapContainer.appendChild(msgBox);
-
-        // Inject into page
-        const target = document.querySelector('.content-wrapper') || document.body;
-        target.prepend(mapContainer);
-
-        // 4. Animation
-        let totalFlightTime = destData.std || 2100;
-        const remAtStart = getRemainingSeconds();
-        if (remAtStart <= (destData.bus || 600)) totalFlightTime = destData.bus;
-        else if (remAtStart <= (destData.air || 1500)) totalFlightTime = destData.air;
-
-        function move() {
-            const currentRem = getRemainingSeconds();
-            const progress = Math.max(0, Math.min(1, 1 - (currentRem / totalFlightTime)));
-            const length = path.getTotalLength();
-            const pt = path.getPointAtLength(progress * length);
-
-            plane.style.left = `${pt.x - 12}px`;
-            plane.style.top = `${pt.y - 12}px`;
-
-            const lookAhead = path.getPointAtLength(Math.min((progress + 0.01), 1) * length);
-            const angle = Math.atan2(lookAhead.y - pt.y, lookAhead.x - pt.x) * 180 / Math.PI;
-            plane.style.transform = `rotate(${angle}deg)`;
-
-            requestAnimationFrame(move);
+    // Fire scheduled inflight messages
+    if (phase === 'inflight' && S.inflightSchedule) {
+      let scheduleChanged = false;
+      for (const item of S.inflightSchedule) {
+        if (!item.fired && now >= item.fireAt) {
+          item.fired = true;
+          scheduleChanged = true;
+          let fn;
+          if (item.pool === 'fixed_start') fn = INFLIGHT_FIXED_START[item.idx];
+          else if (item.pool === 'fixed_end') fn = INFLIGHT_FIXED_END[item.idx];
+          else fn = INFLIGHT_RANDOM[item.idx];
+          if (fn) addLog(fn(params));
         }
-
-        function cycle() {
-            msgBox.innerText = `RADIO: ${flightMessages[Math.floor(Math.random() * flightMessages.length)]}`;
-        }
-
-        move();
-        cycle();
-        setInterval(cycle, 8000);
+      }
+      if (scheduleChanged) saveS();
     }
 
-    // Try to load every second until the content area exists
-    const retry = setInterval(() => {
-        if (document.querySelector('.content-wrapper') || document.querySelector('.main-wrapper')) {
-            renderMap();
-            clearInterval(retry);
+    // Random turbulence during inflight or start of descent — fires once per flight
+    if (!S.turbTriggered && (phase === 'inflight' || phase === 'descent') && Math.random() < 0.003) {
+      S.turbTriggered = true;
+      triggerComm('turbulence', params);
+      saveS();
+    }
+
+    // Screech of tyres fires when altitude hits 0 — 60 seconds before end of flight
+    if (timeLeft <= 60000 && S.flying && !S.phasesTriggered.landing_screech) {
+      S.phasesTriggered.landing_screech = true;
+      triggerComm('landing', params);
+      saveS();
+    }
+
+    updateStats(progress, timeLeft);
+    drawPlane(progress, S.src, S.dst);
+    loopTmr = setTimeout(tick, 1000);
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     BUILD HUD
+  ───────────────────────────────────────────────────────────── */
+
+  function buildHUD() {
+    const panel = document.createElement('div');
+    panel.id = 'tcfv';
+    panel.style.width = S.pw + 'px';
+    panel.style.height = S.ph_panel + 'px';
+
+    panel.innerHTML = `
+<div id="tcfv-hdr">
+  <span id="tcfv-title">&#9992;&nbsp;TORN CITY FLIGHT VISUALISER</span>
+  <div id="tcfv-hbtns">
+    <button class="thb ta" id="thb-main" title="Flight view">&#9992;</button>
+    <button class="thb" id="thb-set" title="Settings">&#9881;</button>
+    <button class="thb" id="thb-cred" title="Credits">&#9733;</button>
+    <button class="thb" id="thb-radar" title="Toggle Radar / Normal mode">&#9685;</button>
+    <button class="thb" id="thb-min" title="Minimise">&#8212;</button>
+  </div>
+</div>
+<div id="tcfv-bod">
+
+  <div id="tcfv-main" class="tcfv-pg">
+    <div id="tcfv-mapbox">
+      <svg id="tcfv-svg" viewBox="0 0 ${MAP_W} ${MAP_H}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">${buildMapSVG()}</svg>
+    </div>
+    <div id="tcfv-lower">
+      <div id="tcfv-stats">
+        <div class="ts"><span class="tsl">Status</span>   <span class="tsv" id="ts-status">READY</span></div>
+        <div class="ts"><span class="tsl">Destination</span> <span class="tsv" id="ts-destname">&#8212;</span></div>
+        <div class="ts"><span class="tsl">Distance</span> <span class="tsv" id="ts-dist">&#8212; mi</span></div>
+        <div class="ts"><span class="tsl">ETA</span>      <span class="tsv" id="ts-eta">&#8212;</span></div>
+        <div class="ts"><span class="tsl">Altitude</span> <span class="tsv" id="ts-alt">0 ft</span></div>
+        <div class="ts"><span class="tsl">Airspeed</span> <span class="tsv" id="ts-spd">&#8212; mph</span></div>
+        <div class="ts"><span class="tsl">Fuel</span>     <span class="tsv" id="ts-fuel">&#8212; lbs</span></div>
+        <div class="ts"><span class="tsl">Ticket</span>   <span class="tsv" id="ts-tkt">Standard</span></div>
+      </div>
+      <div id="tcfv-atc">
+        <div id="tcfv-atc-ttl">&#128251; ATC / FLIGHT DECK</div>
+        <div id="tcfv-log"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tcfv-set" class="tcfv-pg" style="display:none">
+    <h3>&#9881; Settings</h3>
+    <p>An <strong>API key</strong> lets the visualiser read your live flight data directly from the Torn City servers, giving accurate real departure and arrival times.</p>
+    <p>To get your API key: log in to Torn City &rarr; <strong>Preferences</strong> &rarr; <strong>API Keys</strong> tab &rarr; create a new key with at least <em>Public Access</em> enabled. It is a 16-character alphanumeric string.</p>
+    <label for="tcfv-api-inp">API Key</label><br>
+    <input id="tcfv-api-inp" type="password" placeholder="Paste your Torn API key here" autocomplete="off" spellcheck="false">
+    <br><br>
+    <button class="tcfv-btn" id="tcfv-api-save">&#128190; Save Key</button>
+    <button class="tcfv-btn" id="tcfv-api-test">&#128279; Test Connection</button>
+    <p id="tcfv-api-msg"></p>
+    <hr>
+    <p class="note">Your API key is stored locally in Tampermonkey's secure storage and is only ever sent to api.torn.com. It is never transmitted anywhere else.</p>
+  </div>
+
+  <div id="tcfv-cred" class="tcfv-pg" style="display:none">
+    <h3>&#9733; Credits</h3>
+    <p class="big-t">TORN CITY<br>Flight Visualiser</p>
+    <p class="ver-t">Version 7.0.0</p>
+    <p>Designed &amp; developed by</p>
+    <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
+    <hr>
+    <p class="note">Built for the Torn City community. Not affiliated with Torn Ltd.<br>
+    Flight timings, altimeter, airspeed, fuel loads and ATC commentary are approximations for entertainment purposes only.</p>
+  </div>
+
+</div>
+<div id="tcfv-resize-handle" title="Drag to resize"></div>`;
+
+    document.body.appendChild(panel);
+
+    el = {
+      panel,
+      bod: panel.querySelector('#tcfv-bod'),
+      status: panel.querySelector('#ts-status'),
+      destname: panel.querySelector('#ts-destname'),
+      dist: panel.querySelector('#ts-dist'),
+      eta: panel.querySelector('#ts-eta'),
+      alt: panel.querySelector('#ts-alt'),
+      spd: panel.querySelector('#ts-spd'),
+      fuel: panel.querySelector('#ts-fuel'),
+      tkt: panel.querySelector('#ts-tkt'),
+      log: panel.querySelector('#tcfv-log'),
+      pgMain: panel.querySelector('#tcfv-main'),
+      pgSet: panel.querySelector('#tcfv-set'),
+      pgCred: panel.querySelector('#tcfv-cred'),
+      svg: panel.querySelector('#tcfv-svg'),
+    };
+
+    panel.style.left = S.px + 'px';
+    panel.style.top = S.py + 'px';
+
+    makeDrag(panel, panel.querySelector('#tcfv-hdr'));
+    makeResize(panel, panel.querySelector('#tcfv-resize-handle'));
+
+    panel.querySelector('#thb-min').addEventListener('click', doMin);
+    panel.querySelector('#thb-radar').addEventListener('click', doRadar);
+    panel.querySelector('#thb-main').addEventListener('click', () => showPg('main'));
+    panel.querySelector('#thb-set').addEventListener('click', () => showPg('set'));
+    panel.querySelector('#thb-cred').addEventListener('click', () => showPg('cred'));
+
+    const apiInp = panel.querySelector('#tcfv-api-inp');
+    apiInp.value = S.apiKey || '';
+    panel.querySelector('#tcfv-api-save').addEventListener('click', () => {
+      S.apiKey = apiInp.value.trim(); saveS();
+      const m = panel.querySelector('#tcfv-api-msg');
+      m.textContent = 'Key saved successfully.'; m.style.color = '#44ff88';
+    });
+    panel.querySelector('#tcfv-api-test').addEventListener('click', () =>
+      testApiKey(apiInp.value.trim(), panel.querySelector('#tcfv-api-msg'))
+    );
+
+    if (S.min) doMin(true);
+    // Restore radar mode
+    try { if (GM_getValue('tcfv_radar', false)) doRadar(); } catch(e) {}
+    showPg(S.page || 'main');
+  }
+
+  function showPg(pg) {
+    S.page = pg;
+    el.pgMain.style.display = pg === 'main' ? 'flex' : 'none';
+    el.pgSet.style.display = pg === 'set' ? 'block' : 'none';
+    el.pgCred.style.display = pg === 'cred' ? 'block' : 'none';
+    document.querySelectorAll('.thb').forEach(b => b.classList.remove('ta'));
+    const map = { main:'#thb-main', set:'#thb-set', cred:'#thb-cred' };
+    document.querySelector(map[pg])?.classList.add('ta');
+    saveS();
+  }
+
+  let radarMode = false;
+
+  function doRadar() {
+    radarMode = !radarMode;
+    const panel = document.getElementById('tcfv');
+    if (radarMode) {
+      panel.classList.add('radar-mode');
+      document.querySelector('#thb-radar').classList.add('ta');
+    } else {
+      panel.classList.remove('radar-mode');
+      document.querySelector('#thb-radar').classList.remove('ta');
+    }
+    try { GM_setValue('tcfv_radar', radarMode); } catch(e) {}
+  }
+
+  function doMin(silent) {
+    S.min = !S.min;
+    const panel = el.panel;
+    const resizeHandle = document.querySelector('#tcfv-resize-handle');
+    if (S.min) {
+      // Collapse to just the header bar
+      el.bod.style.display = 'none';
+      resizeHandle.style.display = 'none';
+      panel.style.height = 'auto';
+      panel.style.minHeight = '0';
+      panel.style.resize = 'none';
+    } else {
+      // Restore to full size
+      el.bod.style.display = 'block';
+      resizeHandle.style.display = 'block';
+      panel.style.height = S.ph_panel + 'px';
+      panel.style.minHeight = '420px';
+    }
+    document.querySelector('#thb-min').innerHTML = S.min ? '&#9633;' : '&#8212;';
+    if (!silent) saveS();
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     DRAG & RESIZE
+  ───────────────────────────────────────────────────────────── */
+
+  function makeDrag(panel, handle) {
+    let drag = false, ox = 0, oy = 0;
+    handle.addEventListener('mousedown', e => {
+      if (e.target.closest('button')) return;
+      drag = true; ox = e.clientX - panel.offsetLeft; oy = e.clientY - panel.offsetTop;
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', e => {
+      if (!drag) return;
+      const nx = e.clientX - ox;
+      const ny = e.clientY - oy;
+      panel.style.left = nx + 'px'; panel.style.top = ny + 'px';
+      S.px = nx; S.py = ny;
+    });
+    document.addEventListener('mouseup', () => { if (drag) { drag = false; saveS(); } });
+  }
+
+  function makeResize(panel, handle) {
+    let resz = false, sx = 0, sy = 0, sw = 0, sh = 0;
+    handle.addEventListener('mousedown', e => {
+      resz = true; sx = e.clientX; sy = e.clientY;
+      sw = panel.offsetWidth; sh = panel.offsetHeight;
+      e.preventDefault(); e.stopPropagation();
+    });
+    document.addEventListener('mousemove', e => {
+      if (!resz) return;
+      const nw = Math.max(500, sw + (e.clientX - sx));
+      const nh = Math.max(420, sh + (e.clientY - sy));
+      panel.style.width = nw + 'px'; panel.style.height = nh + 'px';
+      S.pw = nw; S.ph_panel = nh;
+    });
+    document.addEventListener('mouseup', () => { if (resz) { resz = false; saveS(); } });
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     PREVIEW DESTINATION  (immediate update when dest clicked)
+  ───────────────────────────────────────────────────────────── */
+
+  function previewDest(dstK) {
+    if (S.flying) return;
+    S.previewDst = dstK;
+    drawPath(S.src, dstK);
+    // Zoom map to frame the route
+    if (el.svg) el.svg.setAttribute('viewBox', getZoomedViewBox(S.src, dstK));
+    highlightDots(S.src, dstK);
+    updateStats(0, 0);
+    saveS();
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     TORN PAGE DETECTION
+  ───────────────────────────────────────────────────────────── */
+
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  function matchDest(text) {
+    if (!text) return null;
+    const t = norm(text);
+    for (const [k, d] of Object.entries(DESTS)) {
+      if (t.includes(norm(d.city)) || t.includes(norm(d.country)) || t.includes(norm(d.label))) return k;
+    }
+    return null;
+  }
+
+  function matchTicket(text) {
+    const t = (text || '').toLowerCase();
+    if (t.includes('private') && t.includes('jet')) return 'private';
+    if (t.includes('airstrip') || t.includes('private plane')) return 'airstrip';
+    if (t.includes('business')) return 'business';
+    return 'standard';
+  }
+
+  function readSelectedDest() {
+    const sels = [
+      '[class*="travel"][class*="active"]', '[class*="destination"][class*="active"]',
+      '[class*="country"][class*="active"]', '[class*="selected"]',
+    ];
+    for (const sel of sels) {
+      for (const node of document.querySelectorAll(sel)) {
+        const m = matchDest(node.textContent);
+        if (m) return m;
+      }
+    }
+    return null;
+  }
+
+  function readSelectedTicket() {
+    const sels = [
+      '[class*="ticket"][class*="active"]', '[class*="class"][class*="active"]',
+      '[class*="method"][class*="active"]', '[class*="travel-method"][class*="active"]',
+    ];
+    for (const sel of sels) {
+      const found = document.querySelector(sel);
+      if (found) return matchTicket(found.textContent);
+    }
+    return null;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     HOOK — capture-phase click listener
+  ───────────────────────────────────────────────────────────── */
+
+  function hookClicks() {
+    document.addEventListener('click', e => {
+      let t = e.target;
+      for (let i = 0; i < 5; i++) {
+        if (!t) break;
+        const txt = (t.textContent || '').trim().toLowerCase();
+        const cls = (t.className || '').toString().toLowerCase();
+        const id = (t.id || '').toLowerCase();
+
+        // Destination dot click → preview immediately
+        if (!S.flying && (cls.includes('country') || cls.includes('destination') || cls.includes('travel') || cls.includes('city') || cls.includes('location'))) {
+          const dm = matchDest(t.textContent);
+          if (dm && dm !== S.src) { previewDest(dm); }
         }
-    }, 1000);
+
+        // Ticket type selection → update ticket on visualiser immediately
+        if (cls.includes('ticket') || cls.includes('class') || cls.includes('method') || cls.includes('airstrip')) {
+          const tk = matchTicket(t.textContent);
+          if (S.ticket !== tk) {
+            S.ticket = tk;
+            if (el.tkt) el.tkt.textContent = TICKETS[tk]?.label || tk;
+            if (S.previewDst && !S.flying) {
+              drawPath(S.src, S.previewDst);
+              updateStats(0, 0);
+            }
+            saveS();
+          }
+        }
+
+        // Fly button
+        if (txt === 'fly' || txt === 'fly now' || txt === 'fly!' || txt === 'take off' ||
+          cls.includes('fly-btn') || cls.includes('flybtn') || id.includes('fly') || id.includes('takeoff')) {
+          const dst = readSelectedDest() || S.previewDst || S.dst;
+          const tkt = readSelectedTicket() || S.ticket;
+          if (dst) { startFlight(dst, tkt, S.src !== 'torn'); return; }
+        }
+
+        t = t.parentElement;
+      }
+    }, true);
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     NETWORK HOOK  (XHR + fetch intercept)
+  ───────────────────────────────────────────────────────────── */
+
+  function hookNetwork() {
+    const oOpen = XMLHttpRequest.prototype.open;
+    const oSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function(m, u, ...r) { this._turl = u; return oOpen.apply(this, [m, u, ...r]); };
+    XMLHttpRequest.prototype.send = function(...a) {
+      this.addEventListener('load', function() {
+        try { handleNetResponse(this._turl, JSON.parse(this.responseText)); } catch(e) {}
+      });
+      return oSend.apply(this, a);
+    };
+    const oFetch = window.fetch;
+    window.fetch = function(...a) {
+      const url = typeof a[0] === 'string' ? a[0] : (a[0]?.url || '');
+      const pr = oFetch.apply(this, a);
+      pr.then(r => r.clone().text().then(t => {
+        try { handleNetResponse(url, JSON.parse(t)); } catch(e) {}
+      })).catch(() => {});
+      return pr;
+    };
+  }
+
+  function handleNetResponse(url, data) {
+    if (!data) return;
+    const travel = data.travel || data.travelling || null;
+    if (!travel) return;
+    const dest = travel.destination || travel.dest || '';
+    const method = travel.method || travel.ticket || '';
+    const dep = (travel.departed || 0) * 1000;
+    const arr = (travel.timestamp || 0) * 1000;
+    if (!dest || !dep || !arr) return;
+    const dk = matchDest(dest), tk = matchTicket(method);
+    if (dk && dk !== 'torn') {
+      startFlightTimes('torn', dk, tk, dep, arr, false);
+    } else if ((!dk || dk === 'torn') && S.src !== 'torn') {
+      startFlightTimes(S.src, 'torn', tk, dep, arr, true);
+    }
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     MUTATION OBSERVER
+  ───────────────────────────────────────────────────────────── */
+
+  function watchDOM() {
+    let db;
+    const obs = new MutationObserver(() => {
+      clearTimeout(db);
+      db = setTimeout(() => {
+        // Check for ticket type changes
+        const tk = readSelectedTicket();
+        if (tk && tk !== S.ticket) {
+          S.ticket = tk;
+          if (el.tkt) el.tkt.textContent = TICKETS[tk]?.label || tk;
+          if (S.previewDst && !S.flying) {
+            drawPath(S.src, S.previewDst);
+            updateStats(0, 0);
+          }
+          saveS();
+        }
+
+        // Check for flying text appearing in DOM
+        if (!S.flying) {
+          const body = document.body.textContent;
+          const m = body.match(/(?:travelling|traveling|flying)\s+to\s+([A-Za-z\s]{3,30})(?:[.,\n]|$)/i);
+          if (m) {
+            const dk = matchDest(m[1]);
+            if (dk && dk !== S.dst) {
+              const dur = getDur(S.src, dk, S.ticket);
+              startFlightTimes(S.src, dk, S.ticket, Date.now(), Date.now() + dur, S.src !== 'torn');
+            }
+          }
+        }
+      }, 500);
+    });
+    obs.observe(document.body, { childList:true, subtree:true, characterData:true, attributes:true, attributeFilter:['class'] });
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     START FLIGHT
+  ───────────────────────────────────────────────────────────── */
+
+  function startFlight(dk, tk, isReturn) {
+    const dur = getDur(S.src, dk, tk);
+    startFlightTimes(S.src, dk, tk, Date.now(), Date.now() + dur, isReturn);
+  }
+
+  function startFlightTimes(sk, dk, tk, dep, arr, isReturn) {
+    S.src = sk; S.dst = dk; S.ticket = tk;
+    S.depTime = dep; S.arrTime = arr;
+    S.flying = true; S.isReturn = isReturn;
+    S.prevPhase = ''; S.phasesTriggered = {}; S.turbTriggered = false;
+    turbFired = false;
+    S.inflightSchedule = null;
+    S.log = [];
+    S.previewDst = null;
+    saveS();
+    drawPath(sk, dk);
+    if (el.svg) el.svg.setAttribute('viewBox', getZoomedViewBox(sk, dk));
+    highlightDots(sk, dk);
+    if (isReturn) {
+      const p = {
+        name: S.player,
+        src: DESTS[sk]?.city || '',
+        dst: DESTS[dk]?.city || 'Torn City',
+        eta: fmtTime(arr - Date.now()),
+        speed: TICKETS[tk]?.speed || 545,
+        maxAlt: TICKETS[tk]?.maxAlt || 32000,
+        arrivalTime: (() => { const d = new Date(arr); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; })(),
+        isTornCity: dk === 'torn',
+      };
+      triggerComm('return_start', p);
+      // Suppress the standard takeoff ATC message — return_start already has one
+      S.phasesTriggered.takeoff = true;
+      saveS();
+    }
+    startLoop();
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     TORN API
+  ───────────────────────────────────────────────────────────── */
+
+  function apiGet(key, cb) {
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: `https://api.torn.com/user/?selections=travel,basic&key=${key}`,
+      onload: r => { try { cb(null, JSON.parse(r.responseText)); } catch(e) { cb(e); } },
+      onerror: e => cb(e),
+    });
+  }
+
+  function testApiKey(key, msgEl) {
+    if (!key) { msgEl.textContent = 'Please enter an API key first.'; return; }
+    msgEl.textContent = 'Testing\u2026'; msgEl.style.color = '#aaa';
+    apiGet(key, (err, data) => {
+      if (err || data?.error) {
+        msgEl.textContent = `Error: ${data?.error?.error || String(err)}`;
+        msgEl.style.color = '#ff4444';
+      } else {
+        S.player = data.name || S.player;
+        msgEl.textContent = `Connected as: ${data.name} [${data.player_id}]`;
+        msgEl.style.color = '#44ff88';
+      }
+    });
+  }
+
+  function initFromApi() {
+    if (!S.apiKey) return;
+    apiGet(S.apiKey, (err, data) => {
+      if (err || !data || data.error) return;
+      if (data.name) S.player = data.name;
+      const tr = data.travel;
+      if (!tr || !tr.departed || !tr.timestamp) return;
+      if (Date.now() > tr.timestamp * 1000) return;
+      const dk = matchDest(tr.destination || '');
+      const tk = matchTicket(tr.method || '');
+      const dep = tr.departed * 1000, arr = tr.timestamp * 1000;
+      if (dk && dk !== 'torn') {
+        startFlightTimes('torn', dk, tk, dep, arr, false);
+      } else if (S.src !== 'torn') {
+        startFlightTimes(S.src, 'torn', tk, dep, arr, true);
+      }
+    });
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     CSS
+  ───────────────────────────────────────────────────────────── */
+
+  function injectCSS() {
+    GM_addStyle(`
+#tcfv {
+  position: fixed;
+  z-index: 999999;
+  min-width: 500px;
+  min-height: 420px;
+  background: #0a131f;
+  border: 1px solid #1e3d5c;
+  border-radius: 8px;
+  box-shadow: 0 6px 40px rgba(0,80,160,.5), inset 0 1px 0 rgba(100,180,255,.06);
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 12px;
+  color: #b8d4ee;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  resize: none;
+}
+#tcfv-hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  background: linear-gradient(90deg,#070f1a,#0d1f35,#070f1a);
+  border-radius: 8px 8px 0 0;
+  border-bottom: 1px solid #1a3550;
+  cursor: move;
+  user-select: none;
+  flex-shrink: 0;
+}
+#tcfv-title {
+  font-size: 10px;
+  font-weight: bold;
+  color: #5ab0e8;
+  letter-spacing: 3px;
+  text-shadow: 0 0 10px rgba(80,180,255,.35);
+}
+#tcfv-hbtns { display: flex; gap: 3px; }
+.thb {
+  background: #0f1e30;
+  border: 1px solid #1e3d5c;
+  color: #5a8ab8;
+  border-radius: 3px;
+  padding: 1px 7px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.7;
+  transition: background .15s, color .15s;
+}
+.thb:hover, .ta { background: #1a3a5a; color: #8ac8ff; border-color: #3a6a9a; }
+#tcfv-bod { display: block; flex: 1; overflow: hidden; }
+.tcfv-pg { height: 100%; }
+#tcfv-main { display: flex; flex-direction: column; height: 100%; }
+#tcfv-mapbox { flex: 1; overflow: hidden; background: #06101c; border-bottom: 1px solid #0e2035; min-height: 0; }
+#tcfv-svg { width: 100%; height: 100%; display: block; transition: all 0.5s ease; }
+#tcfv-lower { height: 170px; flex-shrink: 0; display: flex; overflow: hidden; }
+#tcfv-stats { width: 220px; min-width: 220px; padding: 8px 10px; border-right: 1px solid #0e2035; overflow: hidden; }
+.ts { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; padding-bottom: 3px; border-bottom: 1px solid #0c1a28; }
+.tsl { font-size: 9px; color: #3a6a8a; letter-spacing: 1.5px; text-transform: uppercase; white-space: nowrap; }
+.tsv { font-size: 11px; color: #6abcee; font-weight: bold; text-align: right; }
+#tcfv-atc { flex: 1; display: flex; flex-direction: column; padding: 6px 8px; overflow: hidden; min-width: 0; }
+#tcfv-atc-ttl { font-size: 9px; color: #3a6a8a; letter-spacing: 2px; text-transform: uppercase; padding-bottom: 4px; margin-bottom: 4px; border-bottom: 1px solid #0e2035; flex-shrink: 0; }
+#tcfv-log { flex: 1; overflow-y: auto; font-size: 10.5px; color: #8ab8d8; line-height: 1.65; }
+#tcfv-log::-webkit-scrollbar { width: 3px; }
+#tcfv-log::-webkit-scrollbar-thumb { background: #1e3d5c; border-radius: 2px; }
+.tl { padding: 1px 0; border-bottom: 1px dotted #08121e; }
+.tln { color: #c8e890 !important; }
+#tcfv-set, #tcfv-cred { padding: 14px 16px; overflow-y: auto; height: 100%; box-sizing: border-box; }
+#tcfv-set h3, #tcfv-cred h3 { color: #5ab0e8; font-size: 11px; margin: 0 0 12px; border-bottom: 1px solid #1e3d5c; padding-bottom: 6px; letter-spacing: 2px; text-transform: uppercase; }
+#tcfv-set p, #tcfv-cred p { margin: 8px 0; color: #8ab8d8; font-size: 11px; line-height: 1.65; }
+#tcfv-set label { color: #4a7a9a; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
+#tcfv-api-inp { width: 92%; margin: 6px 0; padding: 5px 8px; background: #0c1a28; color: #b8d4ee; border: 1px solid #1e3d5c; border-radius: 4px; font-family: 'Courier New', monospace; font-size: 12px; outline: none; }
+#tcfv-api-inp:focus { border-color: #3a6a9a; }
+#tcfv-api-msg { font-size: 11px; min-height: 18px; margin: 6px 0; }
+.tcfv-btn { background: #0e2035; border: 1px solid #1e3d5c; color: #5ab0e8; border-radius: 4px; padding: 4px 11px; cursor: pointer; font-size: 11px; margin-right: 6px; font-family: monospace; transition: background .15s; }
+.tcfv-btn:hover { background: #1a3a5a; }
+hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
+.note { color: #445566 !important; font-size: 11px !important; line-height: 1.6 !important; }
+.big-t { font-size: 18px; font-weight: bold; color: #5ab0e8 !important; line-height: 1.4 !important; letter-spacing: 1px; }
+.ver-t { font-size: 11px; color: #3a6a8a !important; margin-bottom: 14px !important; }
+#tcfv-author { display: inline-block; margin: 6px 0; color: #44aaff; font-size: 16px; font-weight: bold; text-decoration: none; letter-spacing: 1px; }
+#tcfv-author:hover { color: #88ccff; text-decoration: underline; }
+#tcfv-resize-handle {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 40%, #1e3d5c 40%, #1e3d5c 55%, transparent 55%, transparent 70%, #1e3d5c 70%, #1e3d5c 85%, transparent 85%);
+  border-radius: 0 0 8px 0;
+  opacity: 0.7;
+}
+#tcfv-resize-handle:hover { opacity: 1; }
+
+/* ── RADAR / CRT MODE ── */
+#tcfv.radar-mode {
+  background: #000a00;
+  border-color: #00ff44;
+  box-shadow: 0 0 30px rgba(0,255,68,.35), 0 0 60px rgba(0,255,68,.15), inset 0 0 20px rgba(0,80,0,.4);
+}
+#tcfv.radar-mode::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.18) 2px, rgba(0,0,0,.18) 4px);
+  pointer-events: none;
+  z-index: 1000000;
+  border-radius: 8px;
+}
+#tcfv.radar-mode #tcfv-hdr {
+  background: linear-gradient(90deg,#000a00,#001500,#000a00);
+  border-bottom-color: #004400;
+}
+#tcfv.radar-mode #tcfv-title { color: #00ff44; text-shadow: 0 0 12px #00ff44; }
+#tcfv.radar-mode .thb { background: #001200; border-color: #004400; color: #00cc33; }
+#tcfv.radar-mode .thb:hover,#tcfv.radar-mode .ta { background: #002800; color: #00ff44; border-color: #00aa33; }
+#tcfv.radar-mode #tcfv-mapbox { background: #000800; }
+#tcfv.radar-mode #tcfv-svg { filter: sepia(1) saturate(4) hue-rotate(90deg) brightness(0.85); }
+#tcfv.radar-mode #tcfv-lower,#tcfv.radar-mode #tcfv-set,#tcfv.radar-mode #tcfv-cred { background: #000a00; }
+#tcfv.radar-mode .ts { border-bottom-color: #002200; }
+#tcfv.radar-mode .tsl { color: #006622; }
+#tcfv.radar-mode .tsv { color: #00ff44; text-shadow: 0 0 6px #00ff44; }
+#tcfv.radar-mode #tcfv-atc-ttl { color: #006622; border-bottom-color: #002200; }
+#tcfv.radar-mode #tcfv-log { color: #00cc33; }
+#tcfv.radar-mode .tln { color: #00ff44 !important; text-shadow: 0 0 8px #00ff44; }
+#tcfv.radar-mode #tcfv-set p,#tcfv.radar-mode #tcfv-cred p { color: #00aa33; }
+#tcfv.radar-mode h3 { color: #00ff44 !important; border-bottom-color: #004400 !important; }
+#tcfv.radar-mode #tcfv-api-inp { background: #000a00; color: #00ff44; border-color: #004400; }
+#tcfv.radar-mode .tcfv-btn { background: #001200; color: #00cc33; border-color: #004400; }
+#tcfv.radar-mode .tcfv-btn:hover { background: #002800; }
+#tcfv.radar-mode hr { border-top-color: #003300; }
+#tcfv.radar-mode .note { color: #005522 !important; }
+#tcfv.radar-mode .big-t { color: #00ff44 !important; }
+#tcfv.radar-mode .ver-t { color: #006622 !important; }
+#tcfv.radar-mode #tcfv-author { color: #00ff44; }
+#tcfv.radar-mode #tcfv-author:hover { color: #88ffaa; }
+`);
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     INIT
+  ───────────────────────────────────────────────────────────── */
+
+  function init() {
+    loadS();
+    injectCSS();
+    buildHUD();
+
+    // Replay saved log (no duplicates — just reprint what was already there)
+    renderLog();
+
+    hookClicks();
+    hookNetwork();
+    watchDOM();
+
+    // Restore in-flight or preview state from previous session
+    if (S.flying && S.dst) {
+      if (Date.now() >= S.arrTime) {
+        // Landed while page was closed
+        S.flying = false; S.src = S.dst; S.dst = null;
+        S.phasesTriggered = {}; saveS();
+      } else {
+        drawPath(S.src, S.dst);
+        if (el.svg) el.svg.setAttribute('viewBox', getZoomedViewBox(S.src, S.dst));
+        highlightDots(S.src, S.dst);
+      }
+    } else if (S.previewDst) {
+      drawPath(S.src, S.previewDst);
+      if (el.svg) el.svg.setAttribute('viewBox', getZoomedViewBox(S.src, S.previewDst));
+      highlightDots(S.src, S.previewDst);
+    }
+
+    showPg(S.page || 'main');
+    startLoop();
+    initFromApi();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => setTimeout(init, 700));
+  } else {
+    setTimeout(init, 700);
+  }
 
 })();
