@@ -1,1344 +1,1444 @@
 // ==UserScript==
-// @name         TORN CITY Race Commentary
-// @namespace    sanxion.tc.racecommentary
-// @version      2.15.0
-// @description  Live race commentary overlay for Torn City racing
+// @name         TORN CITY Flight Visualiser
+// @namespace    sanxion.tc.flightvisualiser
+// @version      7.0.0
+// @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
-// @updateURL    https://github.com/Quantarallax/Torn-City-Racing-Commentary/raw/refs/heads/main/Torn%20City%20Racing%20Commentary.user.js
-// @downloadURL  https://github.com/Quantarallax/Torn-City-Racing-Commentary/raw/refs/heads/main/Torn%20City%20Racing%20Commentary.user.js
-// @match        https://www.torn.com/page.php?sid=racing*
-// @match        https://www.torn.com/page.php*sid=racing*
-// @grant        GM_getValue
+// @match        https://www.torn.com/page.php?sid=travel*
+// @updateURL    https://github.com/Quantarallax/Torn-City-Flight-Journey-Map/raw/refs/heads/main/Sanxion's%20Torn%20Travel%20Visualizer.user.js
+// @downloadURL  https://github.com/Quantarallax/Torn-City-Flight-Journey-Map/raw/refs/heads/main/Sanxion's%20Torn%20Travel%20Visualizer.user.js
+// @connect      api.torn.com
 // @grant        GM_setValue
-// @run-at       document-idle
+// @grant        GM_getValue
+// @grant        GM_addStyle
+// @grant        GM_xmlhttpRequest
+// @run-at       document-end
 // ==/UserScript==
 
 (function () {
-    'use strict';
+  'use strict';
 
-    // ─── Constants ────────────────────────────────────────────────────────────────
-    const SCRIPT_NAME = 'TORN CITY Race Commentary';
-    const SCRIPT_VERSION = '2.15.0';
-    const AUTHOR = 'Sanxion [2987640]';
-    const AUTHOR_ID = '2987640';
-    const POLL_MS = 1000;
+  /* ─────────────────────────────────────────────────────────────
+     DESTINATIONS  (Torn City canon names — no "New York")
+  ───────────────────────────────────────────────────────────── */
 
-    const AMBIENT_GAP = 28000;
-    const PLAYER_GAP = 14000;
-    // COUNTDOWN and WAITING: one message every ~2 minutes
-    const COUNTDOWN_GAP = 120000;
-    const POSITION_GAP = 9000;
-    const PROXIMITY_GAP = 13000;
-    const FUNNY_GAP = 32000;
-    const WAITING_GAP = 120000;
-    const POSITION_COOLDOWN = 4000;
-    const PRE_LAUNCH_MAX = 3;
+  const MAP_W = 1000;
+  const MAP_H = 500;
 
-    const STORAGE_KEY = 'tc_racecomm_v25';
-    const MAX_FEED = 150;
-    const REPEAT_WINDOW = 10;
+  const DESTS = {
+    torn: { label:'Torn City', country:'USA', city:'Torn City', lat:40.71, lon:-74.01, col:'#ff4444' },
+    mexico: { label:'Mexico', country:'Mexico', city:'Ciudad Juarez', lat:31.73, lon:-106.49, col:'#ff8800' },
+    caymans: { label:'Cayman Islands', country:'Cayman Islands', city:'George Town', lat:19.30, lon:-81.37, col:'#ffcc00' },
+    canada: { label:'Canada', country:'Canada', city:'Toronto', lat:43.65, lon:-79.38, col:'#ff44cc' },
+    hawaii: { label:'Hawaii', country:'USA', city:'Honolulu', lat:21.31, lon:-157.83, col:'#00ffcc' },
+    uk: { label:'United Kingdom', country:'United Kingdom', city:'London', lat:51.51, lon:-0.13, col:'#4488ff' },
+    argentina: { label:'Argentina', country:'Argentina', city:'Buenos Aires', lat:-34.61, lon:-58.38, col:'#44ffaa' },
+    switzerland: { label:'Switzerland', country:'Switzerland', city:'Zurich', lat:47.38, lon:8.54, col:'#aa44ff' },
+    japan: { label:'Japan', country:'Japan', city:'Tokyo', lat:35.69, lon:139.69, col:'#ff4488' },
+    china: { label:'China', country:'China', city:'Beijing', lat:39.91, lon:116.39, col:'#ff8844' },
+    uae: { label:'UAE', country:'United Arab Emirates', city:'Dubai', lat:25.20, lon:55.27, col:'#44ccff' },
+    southafrica: { label:'South Africa', country:'South Africa', city:'Johannesburg', lat:-26.20, lon:28.04, col:'#88ff44' },
+  };
 
-    // ─── SVG Icons ───────────────────────────────────────────────────────────────
-    const ICON = {
-        join: '<span class="tc-icon"><svg width="13" height="13" viewBox="0 0 13 13" fill="none">'
-            + '<circle cx="6.5" cy="6.5" r="6" stroke="#6ec4ff" stroke-width="1.2"/>'
-            + '<polygon points="5,3.5 9.5,6.5 5,9.5" fill="#6ec4ff"/></svg></span>',
-        pits: '<span class="tc-icon"><svg width="13" height="13" viewBox="0 0 13 13" fill="none">'
-            + '<rect x="1" y="1" width="11" height="11" rx="2" stroke="#b0c0d0" stroke-width="1.2"/>'
-            + '<rect x="4" y="4" width="2" height="5" fill="#b0c0d0"/>'
-            + '<rect x="7" y="4" width="2" height="5" fill="#b0c0d0"/></svg></span>',
-        flag: '<span class="tc-icon"><svg width="13" height="13" viewBox="0 0 13 13" fill="none">'
-            + '<line x1="2" y1="1" x2="2" y2="12" stroke="#d090ff" stroke-width="1.5"/>'
-            + '<rect x="2" y="1" width="3" height="3" fill="#d090ff"/>'
-            + '<rect x="5" y="4" width="3" height="3" fill="#d090ff"/>'
-            + '<rect x="8" y="1" width="3" height="3" fill="#d090ff"/>'
-            + '<rect x="2" y="7" width="3" height="3" fill="#d090ff"/>'
-            + '<rect x="8" y="7" width="3" height="3" fill="#d090ff"/></svg></span>',
-        up: '<span class="tc-icon"><svg width="11" height="11" viewBox="0 0 11 11" fill="none">'
-            + '<polygon points="5.5,1 10,9 1,9" fill="#4ee87a"/></svg></span>',
-        down: '<span class="tc-icon"><svg width="11" height="11" viewBox="0 0 11 11" fill="none">'
-            + '<polygon points="5.5,10 10,2 1,2" fill="#ff6666"/></svg></span>',
-        proximity: '<span class="tc-icon"><svg width="13" height="13" viewBox="0 0 13 13" fill="none">'
-            + '<circle cx="4" cy="6.5" r="2.5" stroke="#f5c030" stroke-width="1.2"/>'
-            + '<circle cx="9" cy="6.5" r="2.5" stroke="#f5c030" stroke-width="1.2"/></svg></span>',
-        prelaunch: '<span class="tc-icon"><svg width="13" height="13" viewBox="0 0 13 13" fill="none">'
-            + '<rect x="4" y="1" width="5" height="11" rx="1.5" stroke="#ffaa50" stroke-width="1.2"/>'
-            + '<circle cx="6.5" cy="3.5" r="1" fill="#ff6666"/>'
-            + '<circle cx="6.5" cy="6.5" r="1" fill="#f5c030"/>'
-            + '<circle cx="6.5" cy="9.5" r="1" fill="#4ee87a"/></svg></span>',
-        wait: '<span class="tc-icon"><svg width="13" height="13" viewBox="0 0 13 13" fill="none">'
-            + '<circle cx="6.5" cy="6.5" r="6" stroke="#ffaa50" stroke-width="1.2"/>'
-            + '<line x1="6.5" y1="3" x2="6.5" y2="7" stroke="#ffaa50" stroke-width="1.5"/>'
-            + '<circle cx="6.5" cy="9.5" r="1" fill="#ffaa50"/></svg></span>'
+  /* ─────────────────────────────────────────────────────────────
+     BASE DURATIONS ms (standard ticket)
+  ───────────────────────────────────────────────────────────── */
+
+  const BASE_DUR = {
+    torn_mexico:5400000, torn_caymans:4500000, torn_canada:2700000, torn_hawaii:14400000,
+    torn_uk:10800000, torn_argentina:14400000, torn_switzerland:12600000,
+    torn_japan:25200000, torn_china:25200000, torn_uae:21600000, torn_southafrica:25200000,
+  };
+
+  /* ─────────────────────────────────────────────────────────────
+     TICKET TYPES  (per Torn City wiki)
+     Standard    = Jumbo Jet   (max alt 32,000 ft)
+     Business    = Jumbo Jet   (max alt 32,000 ft)
+     Private     = Private Plane (max alt 32,000 ft)
+     Airstrip    = Private Plane single-prop (max alt 12,000 ft)
+  ───────────────────────────────────────────────────────────── */
+
+  const TICKETS = {
+    standard: { label:'Standard', plane:'jumbo', mult:1.00, fuel:42000, speed:545, maxAlt:32000, col:'#aaaaaa' },
+    business: { label:'Business Class', plane:'jumbo', mult:1.15, fuel:47000, speed:575, maxAlt:32000, col:'#4488ff' },
+    private: { label:'Private Plane', plane:'private_plane', mult:1.80, fuel:18000, speed:480, maxAlt:32000, col:'#ff6644' },
+    airstrip: { label:'Airstrip', plane:'prop_plane', mult:1.60, fuel:6000, speed:180, maxAlt:12000, col:'#88ff44' },
+  };
+
+  /* ─────────────────────────────────────────────────────────────
+     FLIGHT PHASES
+  ───────────────────────────────────────────────────────────── */
+
+  const PHASE_CFG = {
+    ready: { label:'READY', col:'#6699aa' },
+    takeoff: { label:'TAKE-OFF', col:'#ffcc44' },
+    inflight: { label:'IN FLIGHT', col:'#44ccff' },
+    descent: { label:'DESCENT', col:'#ffaa44' },
+    landing: { label:'LANDING', col:'#ff8844' },
+    arrived: { label:'LANDED', col:'#44ff88' },
+  };
+
+  const WEATHER = ['clear skies','partly cloudy','overcast','light rain','warm and humid','cool and breezy','sunny with light winds','scattered showers'];
+  const rndW = () => WEATHER[Math.floor(Math.random() * WEATHER.length)];
+
+  /* ─────────────────────────────────────────────────────────────
+     COMMENTARY  (keyed by phase; each fn(params)->string)
+     No duplicates — each phase fires exactly once per flight.
+  ───────────────────────────────────────────────────────────── */
+
+  // Fixed inflight messages — always shown (in order at start/end of inflight)
+  const INFLIGHT_FIXED_START = [
+    p => `Levelling off at ${p.maxAlt.toLocaleString()} feet. Weather good. All clear.`,
+    () => 'Seat belt sign has been turned off.',
+  ];
+  const INFLIGHT_FIXED_END = [
+    p => `Cruising at ${p.speed} mph. Estimated arrival: ${p.eta}.`,
+    p => `Arrival time about ${p.arrivalTime}.`,
+  ];
+  // Random pool — a subset is picked each flight and spread across the inflight period
+  const INFLIGHT_RANDOM = [
+    () => 'A baby starts crying across the aisle.',
+    () => 'Chedburn flies past.',
+    p => `${p.name}'s seat gets constantly kicked from behind by a small child.`,
+    () => 'A couple a few rows back start fighting each other.',
+    () => "Someone starts shouting, 'I'm sick of these m*fucking snakes on this m*fucking plane.'",
+    () => 'Outside the window, a shadowy figure smashes up the wing.',
+    () => 'A Canadian guy stares wide-eyed at the destruction to the wing.',
+    () => 'WARNING: Flight proximity alert!',
+    () => 'ATC stand by, unsure of error reason.',
+    () => 'A jet flies past, upside down.',
+  ];
+
+  const COMMENTARY = {
+    ready: [
+      p => `${p.name} requesting clearance for take-off from ${p.src} Airport.`,
+      p => `Preflight checks confirmed. Welcome aboard, ${p.name}.`,
+      p => `Destination: ${p.dst}. Estimated flight time: ${p.eta}.`,
+    ],
+    takeoff: [
+      p => `ATC: ${p.name}, you are cleared for take-off. Runway 1C. Proceed.`,
+      () => 'Increasing speed, throttle engaged.',
+      p => `Climbing to ${p.maxAlt.toLocaleString()} feet.`,
+    ],
+    turbulence: [
+      () => 'Slight turbulence — nothing to worry about.',
+    ],
+    descent: [
+      () => 'Cabin crew, prepare for descent.',
+      () => 'Miss Mile High Club pops her head up from behind a seat near the front.',
+      () => 'Someone honks up their in-flight meal.',
+      () => 'Ladies and gentlemen, please fasten your seat belts.',
+      p => `Weather in ${p.dst} is ${rndW()}. Have a nice day.`,
+      p => `${p.name} checks their weapons for plane disembarkation.`,
+    ],
+    landing: [
+      () => '*Screech of tyres on tarmac.*',
+      () => 'Slight turbulence, but not too bad.',
+      () => 'Yes, weapons look good and oiled.',
+    ],
+    arrived: [
+      p => `Arrival confirmed at ${p.dst}.`,
+      p => p.isTornCity
+        ? 'Welcome to Torn City, please enjoy your stay, however long it will be. Stay safe. Thank you.'
+        : 'Remember: due to current circumstances, it is advisable to get your business done, and then leave the country. Thank you.',
+    ],
+    return_start: [
+      () => 'Refuel complete. Taxiing to runway. Have a nice flight.',
+      p => `ATC: ${p.name}, you are cleared for take-off. Runway 2A. Proceed.`,
+      () => 'Wheels up. Heading home.',
+    ],
+  };
+
+  /* ─────────────────────────────────────────────────────────────
+     STATE  — persisted via GM_setValue
+  ───────────────────────────────────────────────────────────── */
+
+  let S = {
+    src:'torn', dst:null, depTime:null, arrTime:null,
+    ticket:'standard', player:'Pilot', flying:false, isReturn:false,
+    prevPhase:'', phasesTriggered:{}, turbTriggered:false,
+    log:[], px:20, py:60, pw:680, ph_panel:520, min:false, page:'main', apiKey:'',
+    previewDst:null, inflightSchedule:null,
+  };
+
+  const saveS = () => {
+    try {
+      GM_setValue('tcfv_v3', JSON.stringify({
+        src:S.src, dst:S.dst, depTime:S.depTime, arrTime:S.arrTime,
+        ticket:S.ticket, player:S.player, flying:S.flying, isReturn:S.isReturn,
+        prevPhase:S.prevPhase, phasesTriggered:S.phasesTriggered, turbTriggered:S.turbTriggered,
+        log:S.log.slice(-30), px:S.px, py:S.py, pw:S.pw, ph_panel:S.ph_panel,
+        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule,
+      }));
+    } catch(e) {}
+  };
+
+  const loadS = () => {
+    try {
+      const r = GM_getValue('tcfv_v3', null);
+      if (r) Object.assign(S, JSON.parse(r));
+      if (!S.phasesTriggered) S.phasesTriggered = {};
+      if (!S.inflightSchedule) S.inflightSchedule = null;
+    } catch(e) {}
+  };
+
+  /* ─────────────────────────────────────────────────────────────
+     GEOMETRY
+  ───────────────────────────────────────────────────────────── */
+
+  const toXY = (lon, lat) => ({
+    x: ((lon + 180) / 360) * MAP_W,
+    y: ((90 - lat) / 180) * MAP_H,
+  });
+
+  const haversine = (a, b) => {
+    const R = 3958.8, r = Math.PI / 180;
+    const dLat = (b.lat - a.lat) * r, dLon = (b.lon - a.lon) * r;
+    const x = Math.sin(dLat/2)**2 + Math.cos(a.lat*r) * Math.cos(b.lat*r) * Math.sin(dLon/2)**2;
+    return Math.round(R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x)));
+  };
+
+  const getDur = (sk, dk, tk) => {
+    const b = BASE_DUR[`${sk}_${dk}`] || BASE_DUR[`${dk}_${sk}`] || 7200000;
+    return Math.round(b / (TICKETS[tk]?.mult || 1));
+  };
+
+  const buildBez = (sk, dk) => {
+    const s = toXY(DESTS[sk].lon, DESTS[sk].lat);
+    const d = toXY(DESTS[dk].lon, DESTS[dk].lat);
+    const sag = Math.abs(d.x - s.x) * 0.22 + Math.abs(d.y - s.y) * 0.08;
+    const c = { x:(s.x+d.x)/2, y:Math.max(8,(s.y+d.y)/2 - sag) };
+    return { s, d, c };
+  };
+
+  const bPt = (t, s, c, d) => ({
+    x: (1-t)**2*s.x + 2*(1-t)*t*c.x + t**2*d.x,
+    y: (1-t)**2*s.y + 2*(1-t)*t*c.y + t**2*d.y,
+  });
+
+  const bAng = (t, s, c, d) => Math.atan2(
+    2*(1-t)*(c.y-s.y) + 2*t*(d.y-c.y),
+    2*(1-t)*(c.x-s.x) + 2*t*(d.x-c.x)
+  ) * 180 / Math.PI;
+
+  /* ─────────────────────────────────────────────────────────────
+     FLIGHT CALCULATORS
+  ───────────────────────────────────────────────────────────── */
+
+  const getPhase = p => {
+    if (!S.flying) return 'ready';
+    if (p < 0.05) return 'takeoff';
+    if (p < 0.75) return 'inflight';
+    if (p < 0.90) return 'descent';
+    if (p < 0.98) return 'landing';
+    return 'arrived';
+  };
+
+  // timeLeftMs optional — when supplied, altitude drops to 0 at 60s before landing
+  const getAlt = (p, timeLeftMs) => {
+    const maxAlt = TICKETS[S.ticket]?.maxAlt || 32000;
+    if (!S.flying || p <= 0) return 0;
+    if (p < 0.05) return Math.round(maxAlt * (p / 0.05));
+    if (p < 0.75) return maxAlt;
+    if (timeLeftMs !== undefined && timeLeftMs <= 60000) return 0;
+    return Math.max(0, Math.round(maxAlt * (1 - (p - 0.75) / 0.23)));
+  };
+
+  const getSpd = (p, mx) => {
+    if (!S.flying || p <= 0) return 0;
+    if (p < 0.05) return Math.round(mx * (p / 0.05));
+    if (p < 0.90) return mx;
+    if (p < 0.98) return Math.round(mx * (1 - (p - 0.90) / 0.08));
+    return 0;
+  };
+
+  const getFuel = (p, tk) => Math.max(0, Math.round((TICKETS[tk]?.fuel || 42000) * (1 - Math.max(0, p))));
+
+  const fmtTime = ms => {
+    if (ms <= 0) return 'Arrived';
+    const s = Math.floor(ms/1000), h = Math.floor(s/3600), m = Math.floor((s%3600)/60), ss = s%60;
+    return h > 0 ? `${h}h ${String(m).padStart(2,'0')}m` : m > 0 ? `${m}m ${String(ss).padStart(2,'0')}s` : `${ss}s`;
+  };
+
+  /* ─────────────────────────────────────────────────────────────
+     MAP VIEWPORT ZOOM — zooms SVG viewBox to frame the route
+  ───────────────────────────────────────────────────────────── */
+
+  function getZoomedViewBox(sk, dk) {
+    if (!sk || !dk) return `0 0 ${MAP_W} ${MAP_H}`;
+    const s = toXY(DESTS[sk].lon, DESTS[sk].lat);
+    const d = toXY(DESTS[dk].lon, DESTS[dk].lat);
+    const pad = 90;
+    let minX = Math.min(s.x, d.x) - pad;
+    let maxX = Math.max(s.x, d.x) + pad;
+    let minY = Math.min(s.y, d.y) - pad;
+    let maxY = Math.max(s.y, d.y) + pad;
+    // Clamp to map bounds
+    minX = Math.max(0, minX);
+    minY = Math.max(0, minY);
+    maxX = Math.min(MAP_W, maxX);
+    maxY = Math.min(MAP_H, maxY);
+    // Maintain 2:1 aspect ratio of the svg viewport
+    const vw = maxX - minX, vh = maxY - minY;
+    if (vw / vh < 2) {
+      const extra = (vh * 2 - vw) / 2;
+      minX = Math.max(0, minX - extra);
+      maxX = Math.min(MAP_W, maxX + extra);
+    }
+    return `${minX.toFixed(0)} ${minY.toFixed(0)} ${(maxX-minX).toFixed(0)} ${(maxY-minY).toFixed(0)}`;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     SVG WORLD MAP  (detailed coastline polygons, equirectangular)
+  ───────────────────────────────────────────────────────────── */
+
+  function buildMapSVG() {
+    let dots = '';
+    for (const [key, d] of Object.entries(DESTS)) {
+      const { x, y } = toXY(d.lon, d.lat);
+      const right = x < MAP_W * 0.55, lx = right ? 12 : -12, anc = right ? 'start' : 'end';
+      dots += `<g id="tcfv-dot-${key}" class="dest-dot" transform="translate(${x.toFixed(1)},${y.toFixed(1)})">
+  <circle class="dot-glow" r="10" fill="${d.col}" opacity="0.08"/>
+  <circle class="dot-ring" r="5.5" fill="none" stroke="${d.col}" stroke-width="0.8" opacity="0.4"/>
+  <circle class="dot-core" r="3.5" fill="${d.col}" opacity="0.85"/>
+  <circle r="1.4" fill="#fff"/>
+  <text class="dot-lbl" x="${lx}" y="4" font-size="9" fill="${d.col}" text-anchor="${anc}" font-family="Courier New,monospace" opacity="0.7" style="pointer-events:none">${d.city}</text>
+</g>`;
+    }
+
+    return `<defs>
+  <radialGradient id="og" cx="50%" cy="45%" r="65%">
+    <stop offset="0%" stop-color="#0c2040"/>
+    <stop offset="100%" stop-color="#05101a"/>
+  </radialGradient>
+  <filter id="gl" x="-50%" y="-50%" width="200%" height="200%">
+    <feGaussianBlur stdDeviation="2.5" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <filter id="glb" x="-80%" y="-80%" width="260%" height="260%">
+    <feGaussianBlur stdDeviation="5" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <marker id="arr" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+    <path d="M0,0 L6,3 L0,6 Z" fill="rgba(255,255,255,0.5)"/>
+  </marker>
+</defs>
+<rect width="${MAP_W}" height="${MAP_H}" fill="url(#og)"/>
+<!-- Graticule -->
+<line x1="0" y1="${((90/180)*MAP_H).toFixed(0)}" x2="${MAP_W}" y2="${((90/180)*MAP_H).toFixed(0)}" stroke="#0d2035" stroke-width="1"/>
+<line x1="${(MAP_W/2).toFixed(0)}" y1="0" x2="${(MAP_W/2).toFixed(0)}" y2="${MAP_H}" stroke="#0d2035" stroke-width="0.6"/>
+<line x1="0" y1="${((66.5/180)*MAP_H).toFixed(0)}" x2="${MAP_W}" y2="${((66.5/180)*MAP_H).toFixed(0)}" stroke="#0c2a18" stroke-width="0.6" stroke-dasharray="6,6"/>
+<line x1="0" y1="${((113.5/180)*MAP_H).toFixed(0)}" x2="${MAP_W}" y2="${((113.5/180)*MAP_H).toFixed(0)}" stroke="#0c2a18" stroke-width="0.6" stroke-dasharray="6,6"/>
+<!-- ── NORTH AMERICA ── -->
+<polygon points="130,64 171,41 253,34 306,36 349,45 388,65 391,89 376,114 360,137 370,170 348,208 318,235 289,255 260,272 232,260 203,235 175,215 149,185 130,143 119,105" fill="#1a4418" stroke="#2a6030" stroke-width="1.2"/>
+<!-- Alaska -->
+<polygon points="34,64 87,47 114,59 107,82 67,91 29,81" fill="#1a4418" stroke="#2a6030" stroke-width="0.8"/>
+<!-- Aleutians (simplified) -->
+<ellipse cx="20" cy="105" rx="18" ry="4" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
+<!-- Greenland -->
+<polygon points="334,23 383,15 411,33 398,64 352,71 329,51" fill="#22503a" stroke="#2e6c40" stroke-width="0.8"/>
+<!-- Baja + Central America -->
+<polygon points="170,174 193,196 185,238 165,254 148,225 163,190" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<polygon points="218,235 253,258 246,279 228,285 204,266 200,245" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<!-- Caribbean islands -->
+<ellipse cx="294" cy="240" rx="17" ry="7" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
+<ellipse cx="256" cy="248" rx="7" ry="4" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- ── SOUTH AMERICA ── -->
+<polygon points="237,254 280,242 338,249 373,277 385,326 367,380 338,412 296,420 261,398 242,350 234,303" fill="#1a4418" stroke="#2a6030" stroke-width="1.2"/>
+<polygon points="237,254 266,244 271,262 251,269 234,264" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- Falkland Islands -->
+<ellipse cx="289" cy="415" rx="9" ry="5" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- ── EUROPE ── -->
+<polygon points="444,60 483,46 530,41 573,50 602,64 608,84 587,101 556,111 516,107 480,97 447,82" fill="#1a4418" stroke="#2a6030" stroke-width="1"/>
+<polygon points="444,82 481,77 484,115 461,129 435,110" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<!-- Scandinavia -->
+<polygon points="491,42 523,28 561,34 570,50 548,60 506,58" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<!-- British Isles -->
+<polygon points="454,67 482,60 489,80 474,88 452,81" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<ellipse cx="462" cy="58" rx="10" ry="6" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- Italy -->
+<polygon points="519,101 539,95 545,116 536,138 521,141 513,123" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
+<!-- Iberian Peninsula -->
+<polygon points="444,82 480,76 486,116 461,129 434,111" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
+<!-- Greece -->
+<polygon points="573,102 590,97 588,115 574,118 565,109" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- ── AFRICA ── -->
+<polygon points="470,143 524,131 602,130 659,155 683,200 666,257 628,302 587,335 540,351 496,325 469,283 462,236 469,188" fill="#1a4418" stroke="#2a6030" stroke-width="1.2"/>
+<!-- Horn of Africa -->
+<polygon points="659,207 689,199 695,228 668,237 649,222" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<!-- Madagascar -->
+<polygon points="622,294 643,285 651,317 634,330 614,313" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<!-- ── MIDDLE EAST ── -->
+<polygon points="590,139 671,130 713,148 723,193 692,217 642,210 604,185" fill="#1a4418" stroke="#2a6030" stroke-width="0.8"/>
+<!-- Turkey -->
+<polygon points="578,103 647,94 668,109 663,129 598,136 572,120" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<!-- ── ASIA ── -->
+<polygon points="575,46 697,29 822,33 905,50 933,90 928,131 892,156 875,178 834,189 780,185 740,148 694,140 639,145 614,136 584,119 578,88" fill="#1a4418" stroke="#2a6030" stroke-width="1.2"/>
+<!-- Indian Subcontinent -->
+<polygon points="656,147 722,140 750,162 745,231 710,248 676,229 649,190" fill="#1a4418" stroke="#2a6030" stroke-width="0.7"/>
+<ellipse cx="744" cy="246" rx="8" ry="11" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- SE Asia / Indochina -->
+<polygon points="736,148 793,139 820,164 797,197 757,201 736,178" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<!-- Malaysia / Indonesia (simplified) -->
+<polygon points="793,202 832,192 848,210 826,225 798,218" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
+<polygon points="836,220 877,215 890,234 862,244 838,235" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- Japan -->
+<polygon points="869,113 892,107 906,132 891,152 872,145" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
+<polygon points="888,96 907,91 918,110 904,118 887,112" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- Korean Peninsula -->
+<polygon points="841,115 858,109 862,133 848,139 837,128" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- Taiwan -->
+<polygon points="839,181 850,175 855,192 845,198" fill="#1a4418" stroke="#2a6030" stroke-width="0.3"/>
+<!-- Philippines (simplified) -->
+<ellipse cx="862" cy="196" rx="9" ry="14" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- ── AUSTRALIA ── -->
+<polygon points="782,285 875,264 933,286 941,334 904,361 851,375 789,350 770,313" fill="#1a4418" stroke="#2a6030" stroke-width="1.2"/>
+<!-- Tasmania -->
+<ellipse cx="875" cy="380" rx="12" ry="10" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- New Zealand -->
+<polygon points="934,338 952,328 958,352 945,362 930,353" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
+<polygon points="940,364 955,357 962,378 950,388 936,377" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
+<!-- ── ANTARCTICA ── -->
+<rect x="0" y="${MAP_H - 24}" width="${MAP_W}" height="24" fill="#1a3a26" opacity="0.7"/>
+<!-- Dynamic layers (drawn on top of land) -->
+<g id="tcfv-pathg"></g>
+${dots}
+<g id="tcfv-planeg"></g>`;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     ANIMATED DASH OFFSET
+  ───────────────────────────────────────────────────────────── */
+
+  let dashAnimId = null;
+  let dashOffset = 0;
+
+  function startDashAnim() {
+    if (dashAnimId) cancelAnimationFrame(dashAnimId);
+    const step = () => {
+      dashOffset = (dashOffset + 0.4) % 20;
+      const polyline = document.getElementById('tcfv-route-line');
+      if (polyline) polyline.style.strokeDashoffset = -dashOffset;
+      dashAnimId = requestAnimationFrame(step);
     };
-
-    const TROPHY = {
-        1: '<span class="tc-trophy tp-gold">&#127942;</span>',
-        2: '<span class="tc-trophy tp-silver">&#129352;</span>',
-        3: '<span class="tc-trophy tp-bronze">&#129353;</span>'
-    };
-
-    const S = {
-        MENU: 'MENU', COUNTDOWN: 'COUNTDOWN', PRE_LAUNCH: 'PRE_LAUNCH',
-        WAITING: 'WAITING', RACING: 'RACING', ENDED: 'ENDED', CRASHED: 'CRASHED'
-    };
-
-    // ─── Commentary banks ─────────────────────────────────────────────────────────
-    const LINES = {
-        COUNTDOWN: {
-            ambient: [
-                'Just a waiting game now.',
-                'The paddock is quiet. Everyone waiting for the clock.',
-                'All cars in position. Nothing to do but wait.',
-                'Tick tock. The countdown is the hardest part.',
-                'Crews standing by. Tension already building.',
-                'The calm before the storm. {track} is ready and waiting.',
-                'Silence across the grid. Every driver deep in focus.'
-            ],
-            player: [
-                '{player} has settled into {pos} and holds their nerve.',
-                '{player} locked in and ready. Grid position secured.',
-                'All eyes on {player} as the countdown ticks away.',
-                '{player} in the {car}, sitting {pos}. Cool and composed.'
-            ]
-        },
-        PRE_LAUNCH: {
-            ambient: [
-                'Not long now.',
-                'Tensions are rising.',
-                'Rioting can be seen across the other side of the track.',
-                'Engines build to a crescendo. Nearly time.',
-                'Every driver coiled and ready. The start is almost upon us.',
-                'The grid trembles with anticipation. Seconds away.',
-                'All systems ready. The crowd has gone eerily quiet.',
-                'The lights are about to come on. This is the moment.'
-            ],
-            player: [
-                '{player} poised in {pos}. The launch will be critical.',
-                'Watch {player} — reaction time off the line could be decisive.',
-                '{player} breathes steady in the {car}. Focused. Ready.',
-                '{player} sits {pos}. Every tenth of a second counts from here.'
-            ]
-        },
-        WAITING: {
-            ambient: [
-                'Which idiot put a number of racers limit on this?',
-                '{player} fiddles with the gear stick, willing someone else to join.',
-                'Engines rev in annoyance.',
-                'The organisers stare at the empty grid. Come on, people.',
-                'Awkward silence. More drivers needed before we can race.',
-                'Someone in the stands shouts "Let\'s get going!" Not yet, friend.'
-            ]
-        },
-        RACING: {
-            ambient: [
-                'The crowd goes wild.',
-                'Someone from the crowd throws a grenade at the track.',
-                'A fight breaks out near the starting line.',
-                'Someone carelessly walks into the path of traffic! Oh dear.',
-                'Someone released a spike-strip onto the track.',
-                "There's a massive oil spillage and debris at the first turn.",
-                'Explosions can be heard across the track area.',
-                'Someone opens fire on the crowd near the exit.',
-                '{track} proving as unforgiving as ever this afternoon.',
-                'Strategy plays a big role in how this one unfolds.',
-                'Every lap matters at this stage. No room for error.'
-            ],
-            player: [
-                '{player} sits in {pos}, keeping it clean and consistent.',
-                '{player} threads every corner in the {car}. A measured drive.',
-                '{player} holds {pos} with real authority in the {car}.',
-                '{player} navigates the pack well. Eyes firmly on the prize.',
-                '{player} stays smooth and disciplined. Running {pos}.'
-            ],
-            funny: [
-                '{name} appears to be shooting at other cars.',
-                '{name} is driving backwards.',
-                'Looks like {name} is drinking a bottle of beer, feet on the steering wheel.'
-            ],
-            moverUp: [
-                '{mover} moves from {moverFrom} to {moverTo}! Charging through the field.',
-                'Excellent move from {mover} — {moverFrom} to {moverTo}!',
-                '{mover} surges forward, {moverFrom} to {moverTo}.',
-                'Position gained! {mover} moves from {moverFrom} to {moverTo}.',
-                '{mover} makes a brilliant move, from {moverFrom} to {moverTo}.',
-                'Up goes {mover}! From {moverFrom} to {moverTo} in a flash.'
-            ],
-            moverDownEngine: [
-                '{faller} drops from {fallerFrom} to {fallerTo} — looks like engine trouble.',
-                'Engine issues for {faller}! Sliding from {fallerFrom} to {fallerTo}.',
-                '{faller} loses ground fast, {fallerFrom} to {fallerTo}. That engine sounds rough.',
-                'Mechanical grief for {faller} — dropping from {fallerFrom} to {fallerTo}.'
-            ],
-            moverDownTyre: [
-                '{faller} moves down from {fallerFrom} to {fallerTo} — tyre trouble suspected.',
-                'Tyre problems for {faller}! From {fallerFrom} to {fallerTo} and falling.',
-                '{faller} struggles with rubber, sliding from {fallerFrom} to {fallerTo}.',
-                'A blowout for {faller}? Dropping from {fallerFrom} to {fallerTo}.'
-            ],
-            moverDownMiscalc: [
-                '{faller} drops from {fallerFrom} to {fallerTo} — a costly miscalculation.',
-                'Poor decision from {faller} — {fallerFrom} to {fallerTo} and regretting it.',
-                '{faller} misjudges the corner, dropping from {fallerFrom} to {fallerTo}.',
-                'A miscalculation from {faller} — sliding back from {fallerFrom} to {fallerTo}.'
-            ],
-            moverDown: [
-                '{faller} moves down from {fallerFrom} to {fallerTo}. Losing ground.',
-                '{faller} drops from {fallerFrom} to {fallerTo}. The pack closes in.',
-                '{faller} concedes ground, sliding from {fallerFrom} to {fallerTo}.',
-                '{faller} under pressure, dropping from {fallerFrom} to {fallerTo}.'
-            ],
-            proximity: [
-                '{p1name} coming very close to {p2name} — side by side through the sector!',
-                'Intense battle between {p1name} and {p2name}. Barely a car width between them.',
-                '{p1name} right on the bumper of {p2name}. This is going to get interesting.',
-                'Wheel to wheel action — {p1name} and {p2name} are inseparable right now.',
-                '{p1name} and {p2name} locked in a fierce duel. Neither gives an inch.',
-                'The crowd on their feet as {p1name} and {p2name} go door to door.'
-            ],
-            // These lines reference {p3} — ONLY used when racerCount >= 3
-            position3: [
-                'Current order: {leader} leads, {p2} in 2nd, {p3} in 3rd.',
-                '{leader} out front, {p2} on their tail, {p3} watching closely.',
-                'Top three right now — {leader}, {p2}, {p3}. All very close.',
-                '{leader} leads from {p2} and {p3}. Every lap a new story.',
-                'Midfield carnage behind {leader}. {p2} and {p3} fighting hard.'
-            ],
-            // These lines only mention 2 players — safe for any racer count
-            position2: [
-                '{leader} out front with {p2} right behind. This is tense.',
-                '{leader} holds the lead but {p2} applies relentless pressure.',
-                '{p2} presses hard on {leader}. Every corner a potential overtake.',
-                '{leader} still leads, {p2} refusing to drop away.',
-                '{last} at the back — but races can change in an instant on {track}.'
-            ]
-        }
-    };
-
-    // ─── State ────────────────────────────────────────────────────────────────────
-    let state = {
-        status: S.MENU,
-        playerName: '—',
-        track: '—',
-        car: '—',
-        position: '—',
-        // *** TWO-RACER GUARD FIX ***
-        // racerCount is ONLY ever set from Position: X/Y scrape (posData.total).
-        // It is NEVER updated from scrapeRacers().length, which uses broad DOM
-        // selectors that can match extra elements and overcount.
-        // Value of 0 = unknown (treat as 2-racer-safe until confirmed otherwise).
-        racerCount: 0,
-        racers: [],
-        prevRacers: [],
-        finishers: [],
-        outroShown: false,
-        lastLap: '—',
-        currentLap: '—',
-        completion: '—',
-        windowFixed: false,
-        halfwayFired: false,
-        preLaunchMsgCount: 0
-    };
-
-    // commentaryPaused — session only, never persisted
-    let commentaryPaused = false;
-
-    // Timers — session only, never persisted
-    let tAmbient = 0;
-    let tPlayer = 0;
-    let tPosition = 0;
-    let tProximity = 0;
-    let tFunny = 0;
-    let tWaiting = 0;
-    let tPosCooldown = 0;
-
-    let recentByType = {
-        ambient: [], player: [], position: [],
-        moverUp: [], moverDown: [],
-        moverDownEngine: [], moverDownTyre: [], moverDownMiscalc: [],
-        proximity: [], funny: [], crash: [], waiting: []
-    };
-
-    let feedLines = [];
-    let knownFinishers = new Set();
-    let knownRacerNames = new Set();
-    let currentStatus = S.MENU;
-    let clearedForStatus = null;
-    let isMinimised = false;
-
-    // Consecutive polls that have seen "not enough drivers" — requires 2 to confirm WAITING.
-    // Resets to 0 the moment any other status is detected, preventing stuck WAITING.
-    let waitingSeenCount = 0;
-
-    // After refreshing during a RACING session, suppress join-messages and show a
-    // "currently racing" summary instead. Set in loadState() when status is RACING.
-    let restoredIntoRacing = false;
-
-    // ─── Persistence ─────────────────────────────────────────────────────────────
-    function loadState () {
-        try {
-            const raw = GM_getValue(STORAGE_KEY, null);
-            if (!raw) return;
-            const p = JSON.parse(raw);
-            state.status = p.status || S.MENU;
-            state.playerName = p.playerName || '—';
-            state.track = p.track || '—';
-            state.car = p.car || '—';
-            state.position = p.position || '—';
-            state.racerCount = p.racerCount || 0;
-            state.racers = p.racers || [];
-            state.prevRacers = p.racers || [];
-            state.finishers = p.finishers || [];
-            state.outroShown = p.outroShown || false;
-            state.lastLap = p.lastLap || '—';
-            state.currentLap = p.currentLap || '—';
-            state.completion = p.completion || '—';
-            state.windowFixed = p.windowFixed || false;
-            state.halfwayFired = p.halfwayFired || false;
-            state.preLaunchMsgCount = p.preLaunchMsgCount || 0;
-            feedLines = p.feedLines || [];
-            recentByType = p.recentByType || {
-                ambient: [], player: [], position: [],
-                moverUp: [], moverDown: [],
-                moverDownEngine: [], moverDownTyre: [], moverDownMiscalc: [],
-                proximity: [], funny: [], crash: [], waiting: []
-            };
-            (state.finishers).forEach(function (f) { knownFinishers.add(f.name); });
-            (state.racers).forEach(function (r) { knownRacerNames.add(r.name); });
-            currentStatus = state.status;
-            clearedForStatus = state.status;
-            // Flag refresh during RACING so we show a summary instead of join messages
-            if (state.status === S.RACING) restoredIntoRacing = true;
-        } catch (_) {}
-    }
-
-    function saveState () {
-        try {
-            GM_setValue(STORAGE_KEY, JSON.stringify({
-                status: state.status,
-                playerName: state.playerName,
-                track: state.track,
-                car: state.car,
-                position: state.position,
-                racerCount: state.racerCount,
-                racers: state.racers,
-                finishers: state.finishers,
-                outroShown: state.outroShown,
-                lastLap: state.lastLap,
-                currentLap: state.currentLap,
-                completion: state.completion,
-                windowFixed: state.windowFixed,
-                halfwayFired: state.halfwayFired,
-                preLaunchMsgCount: state.preLaunchMsgCount,
-                feedLines: feedLines.slice(-MAX_FEED),
-                recentByType
-            }));
-        } catch (_) {}
-    }
-
-    // ─── Helpers ─────────────────────────────────────────────────────────────────
-    function pickLine (pool, typeKey) {
-        const recent = recentByType[typeKey] || [];
-        const available = pool.filter(function (l) { return recent.indexOf(l) === -1; });
-        const source = available.length > 0 ? available : pool;
-        const chosen = source[Math.floor(Math.random() * source.length)];
-        recentByType[typeKey] = recent.concat([chosen]).slice(-REPEAT_WINDOW);
-        return chosen;
-    }
-
-    function fill (tpl, extras) {
-        const vars = Object.assign({
-            player: state.playerName,
-            track: state.track !== '—' ? state.track : 'the circuit',
-            car: state.car !== '—' ? state.car : 'their car',
-            pos: ordinal(parseInt(state.position, 10) || 0),
-            leader: state.racers[0] ? state.racers[0].name : '—',
-            p2: state.racers[1] ? state.racers[1].name : '—',
-            p3: state.racers[2] ? state.racers[2].name : '—',
-            last: state.racers.length > 0 ? state.racers[state.racers.length - 1].name : '—',
-            total: String(state.racerCount || state.racers.length || '?')
-        }, extras || {});
-        return tpl.replace(/\{(\w+)\}/g, function (_, k) {
-            return vars[k] !== undefined ? vars[k] : k;
-        });
-    }
-
-    function ordinal (n) {
-        if (!n || isNaN(n) || n < 1) return '—';
-        const s = ['th', 'st', 'nd', 'rd'];
-        const v = n % 100;
-        return n + (s[(v - 20) % 10] || s[v] || s[0]);
-    }
-
-    function escH (str) {
-        return String(str)
-            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
-
-    function formatCompletion (val) {
-        if (!val || val === '—') return val;
-        return val.replace(/\.\d+%/, '%');
-    }
-
-    // *** TWO-RACER GUARD — THE FIX ***
-    // racerCount comes ONLY from Position: X/Y (the authoritative Torn source).
-    // We use ONLY racerCount here — not racers.length, which could be wrong.
-    // Default (0 = unknown) → use safe 2-player lines only.
-    function isThreePlusRace () {
-        return state.racerCount >= 3;
-    }
-
-    function resetTimers () {
-        const now = Date.now();
-        tAmbient = now + 9000;
-        tPlayer = now + 12000;
-        tPosition = now + 7000;
-        tProximity = now + 15000;
-        tFunny = now + 36000;
-        tWaiting = now + 9000;
-        tPosCooldown = 0;
-    }
-
-    // ─── Feed ─────────────────────────────────────────────────────────────────────
-    const TYPE_CLASS = {
-        status: 'fl-status', ambient: 'fl-ambient', player: 'fl-player',
-        position: 'fl-position', finish: 'fl-finish', outro: 'fl-outro',
-        crash: 'fl-crash', waiting: 'fl-waiting'
-    };
-
-    function makeFeedNode (text, type, icon) {
-        const div = document.createElement('div');
-        div.className = 'tc-fl ' + (TYPE_CLASS[type] || '');
-        div.innerHTML = (icon || '') + '<span class="tc-fl-text">' + escH(text) + '</span>';
-        return div;
-    }
-
-    function getFeedEl () { return document.getElementById('tc-feed-inner'); }
-
-    function scrollToBottom () {
-        requestAnimationFrame(function () {
-            const el = getFeedEl();
-            if (el) el.scrollTop = el.scrollHeight;
-        });
-    }
-
-    function appendToFeed (text, type, icon) {
-        const el = getFeedEl();
-        if (!el) return;
-        const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-        el.appendChild(makeFeedNode(text, type, icon || ''));
-        while (el.children.length > MAX_FEED) el.removeChild(el.firstChild);
-        if (nearBottom) scrollToBottom();
-    }
-
-    function rebuildFeed () {
-        const el = getFeedEl();
-        if (!el) return;
-        el.innerHTML = '';
-        feedLines.forEach(function (l) { el.appendChild(makeFeedNode(l.text, l.type, l.icon || '')); });
-        scrollToBottom();
-    }
-
-    function pushLine (text, type, icon) {
-        const alwaysShow = (type === 'status' || type === 'finish' || type === 'outro' || type === 'crash');
-        if (commentaryPaused && !alwaysShow) return;
-        feedLines.push({ text: text, type: type, icon: icon || '' });
-        if (feedLines.length > MAX_FEED) feedLines.shift();
-        appendToFeed(text, type, icon || '');
-    }
-
-    function clearFeed () {
-        feedLines = [];
-        recentByType = {
-            ambient: [], player: [], position: [],
-            moverUp: [], moverDown: [],
-            moverDownEngine: [], moverDownTyre: [], moverDownMiscalc: [],
-            proximity: [], funny: [], crash: [], waiting: []
-        };
-        const el = getFeedEl();
-        if (el) el.innerHTML = '';
-    }
-
-    // ─── New racer detection ──────────────────────────────────────────────────────
-    function checkNewRacers () {
-        state.racers.forEach(function (r, idx) {
-            if (!knownRacerNames.has(r.name)) {
-                knownRacerNames.add(r.name);
-                if (knownRacerNames.size > 1) {
-                    const posStr = ordinal(r.posNum || idx + 1);
-                    if (currentStatus === S.COUNTDOWN) {
-                        pushLine(r.name + ' joins the paddock.', 'status', ICON.join);
-                    } else if (currentStatus === S.PRE_LAUNCH) {
-                        pushLine(r.name + ' just joined in position ' + posStr + '.', 'status', ICON.join);
-                    }
-                }
-            }
-        });
-    }
-
-    // ─── Halfway message ──────────────────────────────────────────────────────────
-    function checkHalfway () {
-        if (state.halfwayFired) return;
-        const parts = (state.currentLap || '').split('/');
-        if (parts.length !== 2) return;
-        const cur = parseInt(parts[0], 10);
-        const tot = parseInt(parts[1], 10);
-        if (isNaN(cur) || isNaN(tot) || tot < 10) return;
-        if (cur >= Math.floor(tot / 2)) {
-            state.halfwayFired = true;
-            pushLine("And we're halfway through this race, " + (tot - cur) + " laps left to go.", 'ambient');
-        }
-    }
-
-    // ─── Commentary ───────────────────────────────────────────────────────────────
-    function fireCommentary (st) {
-        const now = Date.now();
-
-        if (st === S.COUNTDOWN) {
-            if (now >= tAmbient) {
-                pushLine(fill(pickLine(LINES.COUNTDOWN.ambient, 'ambient')), 'ambient');
-                tAmbient = now + COUNTDOWN_GAP + Math.random() * 30000;
-            }
-            if (now >= tPlayer) {
-                pushLine(fill(pickLine(LINES.COUNTDOWN.player, 'player')), 'player');
-                tPlayer = now + COUNTDOWN_GAP + Math.random() * 30000;
-            }
-        }
-
-        if (st === S.PRE_LAUNCH && state.preLaunchMsgCount < PRE_LAUNCH_MAX) {
-            if (now >= tAmbient) {
-                pushLine(fill(pickLine(LINES.PRE_LAUNCH.ambient, 'ambient')), 'ambient');
-                tAmbient = now + AMBIENT_GAP + Math.random() * 15000;
-                state.preLaunchMsgCount++;
-            } else if (now >= tPlayer && state.preLaunchMsgCount < PRE_LAUNCH_MAX) {
-                pushLine(fill(pickLine(LINES.PRE_LAUNCH.player, 'player')), 'player');
-                tPlayer = now + PLAYER_GAP + Math.random() * 8000;
-                state.preLaunchMsgCount++;
-            }
-        }
-
-        if (st === S.WAITING) {
-            if (now >= tWaiting) {
-                pushLine(fill(pickLine(LINES.WAITING.ambient, 'waiting')), 'waiting', ICON.wait);
-                tWaiting = now + WAITING_GAP + Math.random() * 30000;
-            }
-        }
-
-        if (st === S.RACING) {
-            if (now >= tAmbient) {
-                pushLine(fill(pickLine(LINES.RACING.ambient, 'ambient')), 'ambient');
-                tAmbient = now + AMBIENT_GAP + Math.random() * 15000;
-            }
-            if (now >= tPlayer) {
-                pushLine(fill(pickLine(LINES.RACING.player, 'player')), 'player');
-                tPlayer = now + PLAYER_GAP + Math.random() * 8000;
-            }
-            // Position calls — gated by cooldown; pool selection uses authoritative racerCount
-            if (now >= tPosition && now >= tPosCooldown && state.racers.length >= 2) {
-                if (isThreePlusRace()) {
-                    // 3+ racers confirmed from Position: X/Y — safe to use position3 lines
-                    const pool = LINES.RACING.position3.concat(LINES.RACING.position2);
-                    pushLine(fill(pickLine(pool, 'position')), 'position');
-                } else {
-                    // 2 racers or unknown — only use 2-player-safe lines
-                    pushLine(fill(pickLine(LINES.RACING.position2, 'position')), 'position');
-                }
-                tPosition = now + POSITION_GAP + Math.random() * 5000;
-            }
-            detectMovement();
-            if (now >= tProximity && state.racers.length >= 2) {
-                const idx = Math.floor(Math.random() * (state.racers.length - 1));
-                const r1 = state.racers[idx];
-                const r2 = state.racers[idx + 1];
-                if (r1 && r2) {
-                    pushLine(
-                        fill(pickLine(LINES.RACING.proximity, 'proximity'), { p1name: r1.name, p2name: r2.name }),
-                        'position', ICON.proximity
-                    );
-                    tProximity = now + PROXIMITY_GAP + Math.random() * 8000;
-                }
-            }
-            if (now >= tFunny && state.racers.length > 0) {
-                const r = state.racers[Math.floor(Math.random() * state.racers.length)];
-                pushLine(fill(pickLine(LINES.RACING.funny, 'funny'), { name: r.name }), 'ambient');
-                tFunny = now + FUNNY_GAP + Math.random() * 20000;
-            }
-            checkHalfway();
-        }
-    }
-
-    function detectMovement () {
-        if (!state.prevRacers.length || !state.racers.length) return;
-        const prevMap = {};
-        state.prevRacers.forEach(function (r) { prevMap[r.name] = r.posNum; });
-        const gains = [];
-        const losses = [];
-        state.racers.forEach(function (r) {
-            const prev = prevMap[r.name];
-            if (!prev || prev === r.posNum) return;
-            const isLeader = (r.posNum === 1 || prev === 1);
-            if (r.posNum < prev) { gains.push({ r: r, prev: prev, isLeader: isLeader }); }
-            else { losses.push({ r: r, prev: prev, isLeader: isLeader }); }
-        });
-        gains.sort(function (a, b) { return (b.isLeader ? 1 : 0) - (a.isLeader ? 1 : 0); });
-        losses.sort(function (a, b) { return (b.isLeader ? 1 : 0) - (a.isLeader ? 1 : 0); });
-        gains.forEach(function (item) {
-            const isPlayer = item.r.name === state.playerName;
-            const text = fill(pickLine(LINES.RACING.moverUp, 'moverUp'), {
-                mover: item.r.name, moverFrom: ordinal(item.prev), moverTo: ordinal(item.r.posNum)
-            });
-            pushLine(text, isPlayer ? 'player' : 'position', ICON.up);
-            if (item.isLeader) tPosCooldown = Date.now() + POSITION_COOLDOWN;
-        });
-        losses.forEach(function (item) {
-            const isPlayer = item.r.name === state.playerName;
-            const rnd = Math.random();
-            let pool; let key;
-            if (rnd < 0.25) { pool = LINES.RACING.moverDownEngine; key = 'moverDownEngine'; }
-            else if (rnd < 0.5) { pool = LINES.RACING.moverDownTyre; key = 'moverDownTyre'; }
-            else if (rnd < 0.75) { pool = LINES.RACING.moverDownMiscalc; key = 'moverDownMiscalc'; }
-            else { pool = LINES.RACING.moverDown; key = 'moverDown'; }
-            const text = fill(pickLine(pool, key), {
-                faller: item.r.name, fallerFrom: ordinal(item.prev), fallerTo: ordinal(item.r.posNum)
-            });
-            pushLine(text, isPlayer ? 'player' : 'position', ICON.down);
-            if (item.isLeader) tPosCooldown = Date.now() + POSITION_COOLDOWN;
-        });
-    }
-
-    // ─── Crash sequence ───────────────────────────────────────────────────────────
-    function fireCrashSequence () {
-        const msgs = [
-            fill('There has been a crash!'),
-            fill('{player} has overturned — {car} is in flames.'),
-            fill('Racers are veering around, barely missing the wreckage.'),
-            fill('{player} looks to have been rescued, though not in good shape.')
-        ];
-        [0, 2500, 5000, 8500].forEach(function (d, i) {
-            setTimeout(function () { pushLine(msgs[i], 'crash'); }, d);
-        });
-    }
-
-    // ─── Status transition ────────────────────────────────────────────────────────
-    const CLEAR_ON_ENTRY = [S.COUNTDOWN, S.PRE_LAUNCH, S.RACING];
-
-    function onStatusChange (oldSt, newSt) {
-        resetTimers();
-        // Always reset the WAITING confirmation counter on any status transition
-        waitingSeenCount = 0;
-
-        // Capture existing racers BEFORE any clear, so we can report paddock size
-        const racersBeforeClear = state.racers.slice();
-
-        if (CLEAR_ON_ENTRY.indexOf(newSt) !== -1 && clearedForStatus !== newSt) {
-            if (oldSt === S.MENU || oldSt === S.ENDED || newSt === S.COUNTDOWN) {
-                clearFeed();
-                state.finishers = [];
-                state.outroShown = false;
-                state.halfwayFired = false;
-                state.preLaunchMsgCount = 0;
-                knownFinishers.clear();
-                knownRacerNames.clear();
-                state.racers = [];
-                state.prevRacers = [];
-                state.racerCount = 0;
-
-                // Repopulate knownRacerNames with the racers that were already on the
-                // track when the player joined. This means only genuinely NEW arrivals
-                // after this point will trigger individual "joins the paddock" entries.
-                racersBeforeClear.forEach(function (r) { knownRacerNames.add(r.name); });
-            }
-            clearedForStatus = newSt;
-        }
-        if (newSt === S.PRE_LAUNCH) state.preLaunchMsgCount = 0;
-
-        if (newSt === S.COUNTDOWN) {
-            // Do NOT show paddock/join messages if we're restoring from a RACING save.
-            // The page may briefly detect COUNTDOWN before settling on RACING; these
-            // messages would be wrong (the race has already started).
-            if (!restoredIntoRacing) {
-                const others = racersBeforeClear.filter(function (r) { return r.name !== state.playerName; });
-                if (others.length > 0) {
-                    const n = others.length;
-                    pushLine(
-                        'There ' + (n === 1 ? 'is' : 'are') + ' ' + n + ' player' + (n === 1 ? '' : 's') + ' already in the paddock.',
-                        'status'
-                    );
-                }
-                pushLine(fill('{player} has joined the track in {pos}.'), 'status', ICON.join);
-            }
-        }
-        if (newSt === S.PRE_LAUNCH && oldSt !== S.PRE_LAUNCH) {
-            pushLine('Engines are revving — not long until launch.', 'status', ICON.prelaunch);
-            if (oldSt === S.COUNTDOWN) {
-                pushLine('We are now in Pre-Launch.', 'status', ICON.prelaunch);
-            }
-        }
-        if (newSt === S.WAITING) {
-            pushLine('Not enough drivers to start this race. Waiting\u2026', 'waiting', ICON.wait);
-        }
-        if (newSt === S.RACING) {
-            // Only fire the green-light message if this is a genuine new race start,
-            // not a restore bounce (COUNTDOWN→RACING on page load after refresh)
-            if (!restoredIntoRacing) {
-                const tn = state.track !== '—' ? state.track : 'this circuit';
-                pushLine("It's a green light — we are go on " + tn + "!", 'status', ICON.flag);
-            }
-        }
-        if (newSt === S.CRASHED) fireCrashSequence();
-        if (newSt === S.MENU && oldSt !== S.MENU) {
-            clearFeed();
-            pushLine('Back in the pits. Select a race to get started.', 'status', ICON.pits);
-        }
-        if (newSt === S.ENDED) {
-            state.completion = '100%';
-            renderRaceStats();
-        }
-    }
-
-    // ─── Finishers ────────────────────────────────────────────────────────────────
-    function processFinishers (scraped) {
-        let list = scraped;
-        if (!list.length && state.status === S.ENDED && state.playerName !== '—') {
-            list = [{ name: state.playerName, pos: parseInt(state.position, 10) || 1 }];
-        }
-        list.forEach(function (f) {
-            if (!knownFinishers.has(f.name)) {
-                knownFinishers.add(f.name);
-                state.finishers.push(f);
-                pushLine(
-                    f.name + ' crosses the finish line in ' + ordinal(f.pos || state.finishers.length) + '!',
-                    'finish', ICON.flag
-                );
-            }
-        });
-        if (!state.outroShown && state.finishers.length > 0) {
-            const total = state.racerCount || state.racers.length || state.finishers.length;
-            if (state.finishers.length >= total) {
-                state.outroShown = true;
-                setTimeout(function () {
-                    pushLine('That was a fantastic race! Thank you for tuning in. Brought to you by Sanxion [2987640].', 'outro');
-                    saveState();
-                }, 3500);
-            }
-        }
-    }
-
-    // ─── Scrapers ─────────────────────────────────────────────────────────────────
-    // getPageText — uses a TreeWalker over visible text nodes only.
-    // Excludes our own HUD (#tc-rc-hud) and any element whose id or class
-    // looks like a userscript injection, preventing other running Tampermonkey
-    // scripts from interfering with status/text detection.
-    function getPageText () {
-        if (!document.body) return '';
-        try {
-            const excluded = document.getElementById('tc-rc-hud');
-            const parts = [];
-            const walker = document.createTreeWalker(
-                document.body,
-                NodeFilter.SHOW_TEXT,
-                {
-                    acceptNode: function (node) {
-                        // Walk up to find if this node lives inside an excluded element
-                        let el = node.parentElement;
-                        while (el && el !== document.body) {
-                            if (el === excluded) return NodeFilter.FILTER_REJECT;
-                            // Skip elements that appear to be injected by other scripts
-                            // (common patterns: id/class starting with known prefixes,
-                            //  position:fixed overlays not part of Torn itself)
-                            const id = el.id || '';
-                            const cls = (el.className && typeof el.className === 'string')
-                                ? el.className : '';
-                            if (/^(tc-|torn-|tm-|gm-|us-)/i.test(id) ||
-                                /^(tc-|torn-|tm-|gm-|us-)/i.test(cls)) {
-                                return NodeFilter.FILTER_REJECT;
-                            }
-                            el = el.parentElement;
-                        }
-                        const txt = node.nodeValue || '';
-                        return txt.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
-                    }
-                }
-            );
-            let node = walker.nextNode();
-            while (node) {
-                parts.push(node.nodeValue);
-                node = walker.nextNode();
-            }
-            return parts.join('\n');
-        } catch (_) {
-            // Fallback: innerText minus our HUD text
-            return document.body.innerText || '';
-        }
-    }
-
-    function scrapeName () {
-        const m = getPageText().match(/Name:\s+([A-Za-z0-9_\-[\]]+)/);
-        return m ? m[1].trim() : null;
-    }
-
-    function scrapeTrack () {
-        const m = getPageText().match(/([A-Za-z][A-Za-z0-9 '\-]*?)\s+-\s+\d+\s+laps?\s+-/);
-        return m ? m[1].trim() : null;
-    }
-
-    function scrapeCar () {
-        const text = getPageText();
-        // Method 1: broad regex — permissive, captures any car name format
-        const m = text.match(/[Cc]urrent\s+[Cc]ar[:\s]+([^\n\r]{2,50})/);
-        if (m) {
-            const candidate = m[1].trim().split(/[|\t]/)[0].trim();
-            if (candidate && candidate.length > 1 && candidate.length < 50) return candidate;
-        }
-        // Method 2: TreeWalker to find text nodes containing "current car"
-        try {
-            const walker = document.createTreeWalker(
-                document.body,
-                NodeFilter.SHOW_TEXT,
-                {
-                    acceptNode: function (node) {
-                        const t = node.nodeValue || '';
-                        return /current\s+car/i.test(t) && t.length < 300
-                            ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-                    }
-                }
-            );
-            let node = walker.nextNode();
-            while (node) {
-                const raw = (node.nodeValue || '').replace(/current\s+car/i, '').replace(/^[:\s]+/, '').trim();
-                if (raw && raw.length > 1 && raw.length < 60) return raw.split('\n')[0].trim();
-                const sib = node.nextSibling;
-                if (sib && sib.nodeType === 3) {
-                    const s = (sib.nodeValue || '').trim();
-                    if (s && s.length > 1 && s.length < 60 && !/current/i.test(s)) return s;
-                }
-                node = walker.nextNode();
-            }
-        } catch (_) {}
-        // Method 3: element class patterns
-        const carEls = document.querySelectorAll(
-            '[class*="current-car"], [class*="currentCar"], [class*="car-name"], [class*="carName"], [class*="vehicle"]'
-        );
-        for (let i = 0; i < carEls.length; i++) {
-            const t = carEls[i].textContent.trim();
-            if (t && t.length > 1 && t.length < 60) return t;
-        }
-        return null;
-    }
-
-    // *** KEY CHANGE: scrapePosition is the ONLY source of racerCount ***
-    function scrapePosition () {
-        const m = getPageText().match(/Position:\s*(\d+)\/(\d+)/i);
-        return m ? { pos: m[1], total: parseInt(m[2], 10) } : null;
-    }
-
-    function scrapeLastLap () {
-        const m = getPageText().match(/Last\s+Lap:\s*([\d:]+)/i);
-        return m ? m[1].trim() : null;
-    }
-
-    function scrapeCurrentLap () {
-        const m = getPageText().match(/Lap:\s*(\d+\/\d+)/i);
-        return m ? m[1].trim() : null;
-    }
-
-    function scrapeCompletion () {
-        const m = getPageText().match(/Completion:\s*([\d.]+%)/i);
-        return m ? m[1].trim() : null;
-    }
-
-    function scrapeRacers () {
-        // This returns names and positions for leaderboard display and movement detection.
-        // Its .length is NOT used for racerCount — use scrapePosition().total for that.
-        const racers = [];
-        const driverItems = document.querySelectorAll('ul.driver-item, ul[class*="driver-item"]');
-        driverItems.forEach(function (ul, idx) {
-            const nameEl = ul.querySelector('li.name, li[class*="name"]');
-            const posEl = ul.querySelector('li.position, li[class*="position"], li[class*="pos"], li[class*="rank"]');
-            const name = nameEl ? nameEl.textContent.trim() : '';
-            const posNum = parseInt(posEl ? posEl.textContent.trim() : '', 10) || idx + 1;
-            if (name && name.length > 1 && name.length < 40) {
-                racers.push({ name: name, pos: String(posNum), posNum: posNum });
-            }
-        });
-        if (!racers.length) {
-            const rows = document.querySelectorAll(
-                '[class*="racer"], [class*="racePlayer"], [class*="racerRow"], ' +
-                '[class*="leaderboard"] tr, [class*="standings"] tr, [class*="raceTable"] tr, [class*="raceList"] li'
-            );
-            rows.forEach(function (row) {
-                const nameEl = row.querySelector('[class*="name"], [class*="player"]');
-                const posEl = row.querySelector('[class*="pos"], [class*="rank"], [class*="place"]');
-                const name = nameEl ? nameEl.textContent.trim() : '';
-                const pos = posEl ? posEl.textContent.trim() : '';
-                if (name && name.length > 1 && name.length < 40) {
-                    racers.push({ name: name, pos: pos || '?', posNum: parseInt(pos, 10) || 0 });
-                }
-            });
-        }
-        if (!racers.length) {
-            const rx = /(\d+)\.\s+([A-Za-z0-9_\-]+)/g;
-            let rm;
-            while ((rm = rx.exec(getPageText())) !== null) {
-                if (parseInt(rm[1], 10) <= 100) racers.push({ name: rm[2], pos: rm[1], posNum: parseInt(rm[1], 10) });
-            }
-        }
-        racers.sort(function (a, b) { return a.posNum - b.posNum; });
-        return racers;
-    }
-
-    function scrapeFinishers () {
-        const list = [];
-        const rows = document.querySelectorAll(
-            '[class*="raceResult"] tr, [class*="result"] tr, [class*="finisherList"] li, [class*="raceEnd"] li'
-        );
-        rows.forEach(function (row, idx) {
-            const nameEl = row.querySelector('[class*="name"], [class*="player"]');
-            const posEl = row.querySelector('[class*="pos"], [class*="rank"]');
-            if (nameEl && nameEl.textContent.trim()) {
-                const pos = posEl ? parseInt(posEl.textContent.trim(), 10) : idx + 1;
-                list.push({ name: nameEl.textContent.trim(), pos: pos || idx + 1 });
-            }
-        });
-        return list;
-    }
-
-    // ─── Status detection ─────────────────────────────────────────────────────────
-    function domContains (pattern) {
-        const els = document.querySelectorAll('*');
-        for (let i = 0; i < els.length; i++) {
-            if (pattern.test(els[i].textContent || '')) return true;
-        }
-        return false;
-    }
-
-    function detectStatus () {
-        const text = getPageText();
-        if (text.toLowerCase().indexOf('crashed') !== -1 || document.querySelector('[class*="crashed"], [class*="wrecked"]')) return S.CRASHED;
-        if (/race\s+finished/i.test(text) || /you\s+finished\s+in\s+\d/i.test(text) || document.querySelector('[class*="raceEnd"], [class*="raceFinished"]')) return S.ENDED;
-        if (text.indexOf('Race started') !== -1 || document.querySelector('[class*="raceStarted"], [class*="raceInProgress"]')) return S.RACING;
-        if (/not\s+enough\s+drivers/i.test(text)) {
-            waitingSeenCount++;
-            // Require 2 consecutive polls to confirm WAITING — prevents false positives
-            // from cached page text during navigation
-            if (waitingSeenCount >= 2) return S.WAITING;
-            // Return current status while waiting for confirmation
-            return currentStatus === S.WAITING ? S.WAITING : (currentStatus || S.MENU);
-        }
-        // Text no longer present — reset counter so WAITING can't persist
-        waitingSeenCount = 0;
-        const hasPRL = /race\s+will\s+start\s+in/i.test(text) || domContains(/race\s+will\s+start\s+in/i);
-        if (hasPRL) {
-            const comp = scrapeCompletion();
-            if (!comp || comp === '0.00%' || comp === '0%') return S.PRE_LAUNCH;
-        }
-        const hasTrackLaps = /[A-Za-z][A-Za-z0-9 ]+\s+-\s+\d+\s+laps?\s+-/.test(text) || domContains(/\w[\w ]+\s+-\s+\d+\s+laps?\s+-/);
-        if (hasTrackLaps) {
-            const comp = scrapeCompletion();
-            if (!comp || comp === '0.00%' || comp === '0%') return S.COUNTDOWN;
-            if (text.indexOf('Completion:') === -1) return S.COUNTDOWN;
-            if (/Lap:\s*\d+\/\d+/i.test(text)) return S.RACING;
-            return S.COUNTDOWN;
-        }
-        return S.MENU;
-    }
-
-    // ─── Main poll ────────────────────────────────────────────────────────────────
-    function poll () {
-        const newName = scrapeName();
-        const newTrack = scrapeTrack();
-        const newCar = scrapeCar();
-        const posData = scrapePosition();
-        const newRacers = scrapeRacers();
-        const newStatus = detectStatus();
-
-        if (newName) state.playerName = newName;
-        if (newTrack) state.track = newTrack;
-        // Only update car when we're in an active race context.
-        // While browsing car selection in MENU the scraper can pick up
-        // car list entries and show them incorrectly in the display.
-        if (newCar && newStatus !== S.MENU) state.car = newCar;
-
-        if (posData) {
-            state.position = posData.pos;
-            // *** ONLY source of racerCount — Position: X/Y from the page ***
-            // Always trust this value; it's the authoritative Torn count.
-            if (posData.total > 0) state.racerCount = posData.total;
-        }
-        // *** DO NOT update racerCount from newRacers.length ***
-        // scrapeRacers() uses broad DOM selectors and can overcount.
-
-        if (newRacers.length) {
-            state.prevRacers = state.racers.slice();
-            state.racers = newRacers;
-            if (restoredIntoRacing) {
-                // Refreshed during a race — add all current racers to known set silently
-                // then show a summary message once
-                newRacers.forEach(function (r) { knownRacerNames.add(r.name); });
-                if (newStatus === S.RACING) {
-                    const n = newRacers.length || state.racerCount || '?';
-                    pushLine(
-                        n + ' racer' + (n === 1 ? '' : 's') + ' currently competing. Resuming commentary\u2026',
-                        'status'
-                    );
-                    restoredIntoRacing = false;
-                }
-            } else {
-                checkNewRacers();
-            }
-        }
-
-        if (newStatus !== S.MENU) {
-            const ll = scrapeLastLap();
-            const cl = scrapeCurrentLap();
-            const co = scrapeCompletion();
-            if (ll) state.lastLap = ll;
-            if (cl) state.currentLap = cl;
-            if (co && state.completion !== '100%') state.completion = formatCompletion(co);
-        } else {
-            state.lastLap = '—';
-            state.currentLap = '—';
-            state.completion = '—';
-        }
-
-        if (newStatus !== currentStatus) {
-            onStatusChange(currentStatus, newStatus);
-            currentStatus = newStatus;
-            state.status = newStatus;
-        }
-
-        if (state.status === S.ENDED) processFinishers(scrapeFinishers());
-
-        fireCommentary(state.status);
-        renderInfoBar();
-        renderStatus();
-        renderLeaderboard();
-        renderRaceStats();
-        saveState();
-    }
-
-    // ─── Render ───────────────────────────────────────────────────────────────────
-    function renderInfoBar () {
-        const sv = function (id, v) { const el = document.getElementById(id); if (el) el.textContent = v; };
-        sv('tc-ib-name', state.playerName);
-        sv('tc-ib-track', state.track);
-        sv('tc-ib-car', state.car);
-        const posNum = parseInt(state.position, 10);
-        sv('tc-ib-pos', posNum >= 1 ? ordinal(posNum) : '—');
-    }
-
-    function renderStatus () {
-        const el = document.getElementById('tc-rc-status-val');
-        if (!el) return;
-        const map = {
-            [S.MENU]: { label: 'MENU', cls: 'st-menu' },
-            [S.COUNTDOWN]: { label: 'COUNTDOWN', cls: 'st-countdown' },
-            [S.PRE_LAUNCH]: { label: 'PRE-LAUNCH', cls: 'st-prelaunch' },
-            [S.WAITING]: { label: 'WAITING', cls: 'st-waiting' },
-            [S.RACING]: { label: 'RACING', cls: 'st-racing' },
-            [S.ENDED]: { label: 'ENDED', cls: 'st-ended' },
-            [S.CRASHED]: { label: 'CRASHED', cls: 'st-crashed' }
-        };
-        const m = map[state.status] || { label: state.status, cls: 'st-menu' };
-        el.textContent = m.label;
-        el.className = m.cls;
-    }
-
-    function renderLeaderboard () {
-        const el = document.getElementById('tc-rc-lb-list');
-        if (!el) return;
-        if (state.status === S.MENU) { el.innerHTML = '<div class="tc-lb-empty">Select a race\u2026</div>'; return; }
-        const top3 = state.racers.slice(0, 3);
-        if (!top3.length) { el.innerHTML = '<div class="tc-lb-empty">Awaiting data\u2026</div>'; return; }
-        el.innerHTML = top3.map(function (r, i) {
-            const pn = r.posNum || i + 1;
-            const isMe = r.name === state.playerName;
-            const posClass = pn === 1 ? 'lb-p1' : pn === 2 ? 'lb-p2' : 'lb-p3';
-            const url = 'https://www.torn.com/profiles.php?XID=' + encodeURIComponent(r.name);
-            return '<div class="tc-lb-row' + (isMe ? ' lb-me' : '') + '">'
-                + '<span class="tc-lb-pos ' + posClass + '">' + ordinal(pn) + '</span>'
-                + (TROPHY[pn] || '')
-                + '<a class="tc-lb-name tc-link" href="' + url + '" target="_blank" rel="noopener">' + escH(r.name) + '</a>'
-                + '</div>';
-        }).join('');
-    }
-
-    function renderRaceStats () {
-        const sv = function (id, v) { const el = document.getElementById(id); if (el) el.textContent = v; };
-        sv('tc-stat-last', state.lastLap);
-        sv('tc-stat-lap', state.currentLap);
-        sv('tc-stat-comp', state.completion);
-    }
-
-    function updatePauseBtn () {
-        const btn = document.getElementById('tc-btn-pause');
-        if (!btn) return;
-        btn.textContent = commentaryPaused ? '\u25B6 Resume' : '\u23F8 Pause';
-        btn.classList.toggle('tc-btn-active', commentaryPaused);
-    }
-
-    function updateFixBtn () {
-        const btn = document.getElementById('tc-btn-fix');
-        if (!btn) return;
-        btn.textContent = state.windowFixed ? '\u229E Float' : '\u229F Fix';
-        btn.classList.toggle('tc-btn-active', state.windowFixed);
-        const hud = document.getElementById('tc-rc-hud');
-        if (hud) {
-            if (state.windowFixed) { hud.classList.add('tc-fixed'); } else { hud.classList.remove('tc-fixed'); }
-        }
-    }
-
-    function setMinimised (min) {
-        isMinimised = min;
-        const hud = document.getElementById('tc-rc-hud');
-        const body = document.getElementById('tc-rc-body');
-        const footer = document.getElementById('tc-rc-footer');
-        const btn = document.getElementById('tc-rc-min');
-        if (!hud || !body || !footer || !btn) return;
-        if (min) {
-            body.style.display = 'none'; footer.style.display = 'none';
-            hud.style.height = 'auto'; hud.style.resize = 'none';
-            btn.innerHTML = '&#9660;';
-        } else {
-            body.style.display = ''; footer.style.display = '';
-            hud.style.height = ''; hud.style.resize = 'both';
-            btn.innerHTML = '&#9650;';
-        }
-    }
-
-    function makeDraggable (hudEl, handleEl) {
-        let ox = 0, oy = 0, sl = 0, st = 0, dragging = false;
-        handleEl.addEventListener('mousedown', function (e) {
-            if (e.target.tagName === 'BUTTON') return;
-            if (state.windowFixed) return;
-            dragging = true; ox = e.clientX; oy = e.clientY;
-            const r = hudEl.getBoundingClientRect(); sl = r.left; st = r.top;
-            e.preventDefault();
-        });
-        document.addEventListener('mousemove', function (e) {
-            if (!dragging) return;
-            hudEl.style.left = (sl + e.clientX - ox) + 'px';
-            hudEl.style.top = (st + e.clientY - oy) + 'px';
-            hudEl.style.right = 'auto';
-        });
-        document.addEventListener('mouseup', function () { dragging = false; });
-    }
-
-    // ─── CSS ──────────────────────────────────────────────────────────────────────
-    function injectCSS () {
-        if (document.getElementById('tc-rc-css')) return;
-        const css = `
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Share+Tech+Mono&family=Barlow+Condensed:wght@400;600;700&display=swap');
-#tc-rc-hud{--c-gold:#f5c030;--c-blue:#6ec4ff;--c-green:#4ee87a;--c-purple:#d090ff;--c-orange:#ffaa50;--c-red:#ff6666;--c-white:#f0f4fa;--c-mid:#b0c0d0;--c-muted:#8a9db8;--c-dim:#6a7d94;--c-bg:#07090f;--c-bg2:#060810;--c-border:#202840;--c-border2:#181e30;}
-#tc-rc-hud{position:fixed;top:4vh;right:18px;width:340px;height:75vh;min-width:260px;max-width:520px;background:var(--c-bg);border:1px solid var(--c-border);border-top:3px solid var(--c-gold);border-radius:5px;box-shadow:0 20px 70px rgba(0,0,0,.92);font-family:'Barlow Condensed',sans-serif;color:var(--c-mid);z-index:999999;display:flex;flex-direction:column;overflow:hidden;resize:both;user-select:none;}
-#tc-rc-hud.tc-fixed{position:relative;top:auto;right:auto;left:auto;width:100%;max-width:100%;height:auto;min-height:60vh;border-radius:0;box-shadow:none;resize:vertical;z-index:10;}
-#tc-rc-drag{display:flex;align-items:center;justify-content:space-between;padding:6px 10px 5px;background:linear-gradient(90deg,#0c0f1c 0%,#111628 100%);border-bottom:1px solid var(--c-border);cursor:grab;flex-shrink:0;}
-#tc-rc-drag:active{cursor:grabbing;}
-#tc-rc-hud.tc-fixed #tc-rc-drag{cursor:default;}
-.tc-title-text{font-family:'Orbitron',monospace;font-size:9px;font-weight:700;color:var(--c-gold);letter-spacing:.12em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.tc-hdr-btns{display:flex;gap:4px;flex-shrink:0;margin-left:8px;}
-.tc-hdr-btns button{background:rgba(255,255,255,.05);border:1px solid #2a3050;color:var(--c-muted);width:20px;height:20px;border-radius:3px;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;transition:background .15s,color .15s,border-color .15s;}
-.tc-hdr-btns button:hover{background:rgba(245,192,48,.15);border-color:var(--c-gold);color:var(--c-gold);}
-#tc-rc-body{display:flex;flex-direction:column;flex:1;overflow:hidden;min-height:0;}
-#tc-rc-main{display:flex;flex-direction:column;flex:1;overflow:hidden;min-height:0;}
-#tc-rc-infobar{display:flex;align-items:stretch;background:var(--c-bg2);border-bottom:1px solid var(--c-border2);flex-shrink:0;}
-.tc-ib-cell{flex:1;display:flex;flex-direction:column;align-items:center;padding:5px 4px 4px;min-width:0;}
-.tc-ib-sep{width:1px;background:var(--c-border2);margin:4px 0;flex-shrink:0;}
-.tc-ib-lbl{font-family:'Orbitron',monospace;font-size:7px;font-weight:700;color:var(--c-dim);letter-spacing:.14em;margin-bottom:2px;white-space:nowrap;}
-.tc-ib-val{font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--c-white);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
-#tc-rc-status-row{display:flex;align-items:center;gap:10px;padding:7px 12px 6px;background:var(--c-bg2);border-bottom:1px solid var(--c-border2);flex-shrink:0;}
-.tc-st-lbl{font-family:'Orbitron',monospace;font-size:8px;font-weight:700;color:var(--c-dim);letter-spacing:.14em;flex-shrink:0;}
-#tc-rc-status-val{font-family:'Orbitron',monospace;font-size:20px;font-weight:900;letter-spacing:.05em;}
-.st-menu{color:var(--c-gold);}.st-countdown{color:var(--c-blue);}.st-prelaunch{color:var(--c-orange);}.st-waiting{color:var(--c-orange);}.st-racing{color:var(--c-green);}.st-ended{color:var(--c-purple);}.st-crashed{color:var(--c-red);}
-#tc-rc-cols{position:relative;flex:1;overflow:hidden;min-height:0;display:block;}
-#tc-rc-lb-col{position:absolute;top:0;left:0;bottom:0;width:124px;border-right:1px solid var(--c-border2);background:var(--c-bg2);display:flex;flex-direction:column;overflow:hidden;z-index:2;}
-#tc-rc-lb-list{flex:1;overflow-y:auto;overflow-x:hidden;padding:3px 0;min-height:0;scrollbar-width:thin;scrollbar-color:var(--c-border) transparent;}
-#tc-rc-stats{flex-shrink:0;border-top:1px solid var(--c-border2);padding:5px 6px 7px;background:var(--c-bg2);}
-.tc-stats-row1{display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:3px;}
-.tc-stats-row1 .tc-stat-group{display:flex;align-items:baseline;gap:3px;}
-.tc-stats-row2{display:flex;align-items:center;justify-content:center;gap:4px;}
-.tc-stat-lbl{font-family:'Orbitron',monospace;font-size:7px;font-weight:700;color:var(--c-dim);letter-spacing:.1em;white-space:nowrap;}
-.tc-stat-val{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--c-white);text-align:right;white-space:nowrap;}
-#tc-stat-comp{font-family:'Share Tech Mono',monospace;font-size:12px;font-weight:700;color:var(--c-white);text-align:center;}
-.tc-comp-lbl{font-family:'Orbitron',monospace;font-size:7px;font-weight:700;color:var(--c-dim);letter-spacing:.1em;white-space:nowrap;}
-.tc-lb-empty{font-size:11px;color:var(--c-dim);padding:8px;font-style:italic;line-height:1.5;}
-.tc-lb-row{display:flex;align-items:center;gap:4px;padding:5px 6px;border-bottom:1px solid #0d1020;font-size:12px;font-weight:600;}
-.tc-lb-row.lb-me{background:rgba(245,192,48,.09);border-left:2px solid var(--c-gold);}
-.tc-lb-pos{font-family:'Orbitron',monospace;font-size:9px;font-weight:700;color:var(--c-muted);min-width:20px;flex-shrink:0;}
-.lb-p1{color:#ffd040;}.lb-p2{color:#d0dce8;}.lb-p3{color:#e8a050;}
-.tc-trophy{font-size:14px;flex-shrink:0;line-height:1;}
-.tp-gold{filter:drop-shadow(0 0 4px rgba(255,208,64,.8));}.tp-silver{filter:drop-shadow(0 0 4px rgba(208,220,232,.7));}.tp-bronze{filter:drop-shadow(0 0 4px rgba(232,160,80,.7));}
-.tc-lb-name{color:var(--c-mid);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
-.tc-lb-row.lb-me .tc-lb-name{color:#ffe060;}
-a.tc-link{color:inherit;text-decoration:none;transition:color .15s;}
-a.tc-link:hover{color:var(--c-blue);text-decoration:underline;}
-#tc-rc-feed-col{position:absolute;top:0;left:125px;right:0;bottom:0;display:flex;flex-direction:column;overflow:hidden;}
-.tc-col-hdr{font-family:'Orbitron',monospace;font-size:7px;font-weight:700;color:var(--c-dim);letter-spacing:.14em;padding:5px 8px 4px;border-bottom:1px solid var(--c-border2);flex-shrink:0;white-space:nowrap;}
-#tc-feed-inner{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding-bottom:10px;scrollbar-width:thin;scrollbar-color:var(--c-border) transparent;}
-.tc-fl{display:flex;align-items:flex-start;gap:5px;font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:400;line-height:1.5;padding:3px 10px;border-left:2px solid transparent;color:var(--c-muted);word-break:break-word;flex-shrink:0;width:100%;box-sizing:border-box;}
-.tc-fl-text{flex:1;min-width:0;}
-.tc-icon{flex-shrink:0;display:inline-flex;align-items:center;margin-top:2px;}
-.fl-status{color:var(--c-white);font-weight:700;font-size:13.5px;border-left-color:var(--c-gold);background:rgba(245,192,48,.07);padding-top:4px;padding-bottom:4px;margin:1px 0;}
-.fl-ambient{color:var(--c-dim);font-style:italic;}
-.fl-player{color:#ffe060;border-left-color:var(--c-gold);background:rgba(245,192,48,.08);}
-.fl-position{color:var(--c-blue);border-left-color:#2870cc;background:rgba(110,196,255,.07);}
-.fl-finish{color:var(--c-purple);font-weight:700;font-size:13.5px;border-left-color:#a855f7;background:rgba(208,144,255,.07);margin:1px 0;}
-.fl-outro{color:var(--c-gold);font-weight:600;border-left-color:var(--c-gold);background:rgba(245,192,48,.08);padding-top:5px;padding-bottom:5px;}
-.fl-crash{color:var(--c-red);font-weight:700;border-left-color:var(--c-red);background:rgba(255,102,102,.08);}
-.fl-waiting{color:var(--c-orange);font-style:italic;border-left-color:var(--c-orange);background:rgba(255,170,80,.07);}
-#tc-rc-footer{display:flex;align-items:center;gap:5px;padding:4px 10px;background:var(--c-bg2);border-top:1px solid var(--c-border2);flex-shrink:0;flex-wrap:wrap;}
-.tc-foot-btn{font-family:'Barlow Condensed',sans-serif;font-size:11px;font-weight:700;background:rgba(255,255,255,.04);border:1px solid var(--c-border);color:var(--c-dim);padding:2px 9px;border-radius:3px;cursor:pointer;letter-spacing:.05em;text-transform:uppercase;transition:background .15s,color .15s,border-color .15s;white-space:nowrap;}
-.tc-foot-btn:hover{background:rgba(245,192,48,.12);border-color:var(--c-gold);color:var(--c-gold);}
-.tc-foot-btn.tc-btn-active{background:rgba(245,192,48,.15);border-color:var(--c-gold);color:var(--c-gold);}
-#tc-live-dot{margin-left:auto;width:6px;height:6px;border-radius:50%;background:var(--c-green);flex-shrink:0;animation:tc-pulse 2.5s ease-in-out infinite;}
-@keyframes tc-pulse{0%,100%{opacity:1;}50%{opacity:.15;}}
-#tc-rc-credits{display:none;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding:24px 16px;text-align:center;flex:1;}
-.tc-cred-flag{font-size:36px;line-height:1;}
-.tc-cred-title{font-family:'Orbitron',monospace;font-size:12px;font-weight:900;color:var(--c-gold);letter-spacing:.1em;line-height:1.3;}
-.tc-cred-ver{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--c-dim);letter-spacing:.08em;}
-.tc-cred-by{font-size:14px;font-weight:600;color:var(--c-mid);}
-.tc-cred-by strong{color:var(--c-gold);}
-.tc-cred-plink{color:var(--c-blue);font-size:12px;}
-.tc-cred-plink:hover{text-decoration:underline;}
-.tc-cred-msg{font-size:12px;color:var(--c-muted);line-height:1.7;margin-top:4px;}
-#tc-rc-lb-list::-webkit-scrollbar,#tc-feed-inner::-webkit-scrollbar{width:4px;}
-#tc-rc-lb-list::-webkit-scrollbar-track,#tc-feed-inner::-webkit-scrollbar-track{background:transparent;}
-#tc-rc-lb-list::-webkit-scrollbar-thumb,#tc-feed-inner::-webkit-scrollbar-thumb{background:var(--c-border);border-radius:2px;}
-#tc-feed-inner::-webkit-scrollbar-thumb:hover{background:var(--c-muted);}
-`;
-        const styleEl = document.createElement('style');
-        styleEl.id = 'tc-rc-css';
-        styleEl.textContent = css;
-        document.head.appendChild(styleEl);
-    }
-
-    // ─── Build HUD ────────────────────────────────────────────────────────────────
-    function buildHUD () {
-        if (document.getElementById('tc-rc-hud')) return;
-        injectCSS();
-        const hud = document.createElement('div');
-        hud.id = 'tc-rc-hud';
-        hud.innerHTML = `
-<div id="tc-rc-drag">
-  <span class="tc-title-text">&#127937; ${escH(SCRIPT_NAME)}</span>
-  <div class="tc-hdr-btns">
-    <button id="tc-rc-min" title="Minimise">&#9650;</button>
-    <button id="tc-rc-close" title="Close">&#10005;</button>
-  </div>
-</div>
-<div id="tc-rc-body">
-  <div id="tc-rc-main">
-    <div id="tc-rc-infobar">
-      <div class="tc-ib-cell"><div class="tc-ib-lbl">DRIVER</div><div class="tc-ib-val" id="tc-ib-name">&#8212;</div></div>
-      <div class="tc-ib-sep"></div>
-      <div class="tc-ib-cell"><div class="tc-ib-lbl">TRACK</div><div class="tc-ib-val" id="tc-ib-track">&#8212;</div></div>
-      <div class="tc-ib-sep"></div>
-      <div class="tc-ib-cell"><div class="tc-ib-lbl">CAR</div><div class="tc-ib-val" id="tc-ib-car">&#8212;</div></div>
-      <div class="tc-ib-sep"></div>
-      <div class="tc-ib-cell"><div class="tc-ib-lbl">POS</div><div class="tc-ib-val" id="tc-ib-pos">&#8212;</div></div>
-    </div>
-    <div id="tc-rc-status-row">
-      <span class="tc-st-lbl">STATUS</span>
-      <span id="tc-rc-status-val" class="st-menu">MENU</span>
-    </div>
-    <div id="tc-rc-cols">
-      <div id="tc-rc-lb-col">
-        <div class="tc-col-hdr">TOP 3</div>
-        <div id="tc-rc-lb-list"></div>
-        <div id="tc-rc-stats">
-          <div class="tc-stats-row1">
-            <div class="tc-stat-group"><span class="tc-stat-lbl">LAP</span><span class="tc-stat-val" id="tc-stat-lap">&#8212;</span></div>
-            <div class="tc-stat-group"><span class="tc-stat-lbl">LAST</span><span class="tc-stat-val" id="tc-stat-last">&#8212;</span></div>
-          </div>
-          <div class="tc-stats-row2">
-            <span class="tc-comp-lbl">COMPLETED</span>
-            <span id="tc-stat-comp">&#8212;</span>
-          </div>
-        </div>
-      </div>
-      <div id="tc-rc-feed-col">
-        <div class="tc-col-hdr">COMMENTARY</div>
-        <div id="tc-feed-inner"></div>
-      </div>
-    </div>
-  </div>
-  <div id="tc-rc-credits">
-    <div class="tc-cred-flag">&#127937;</div>
-    <div class="tc-cred-title">${escH(SCRIPT_NAME)}</div>
-    <div class="tc-cred-ver">Version ${escH(SCRIPT_VERSION)}</div>
-    <div class="tc-cred-by">Created by <strong>${escH(AUTHOR)}</strong></div>
-    <a class="tc-cred-plink" href="https://www.torn.com/profiles.php?XID=${AUTHOR_ID}" target="_blank" rel="noopener">View ${escH(AUTHOR)} on Torn</a>
-    <div class="tc-cred-msg">Bugs &amp; feedback welcome!<br>Find me in-game on Torn City.</div>
-  </div>
-</div>
-<div id="tc-rc-footer">
-  <button id="tc-btn-credits" class="tc-foot-btn">Credits</button>
-  <button id="tc-btn-back" class="tc-foot-btn" style="display:none">&#8592; Back</button>
-  <button id="tc-btn-pause" class="tc-foot-btn">&#9208; Pause</button>
-  <button id="tc-btn-fix" class="tc-foot-btn">&#8862; Fix</button>
-  <span id="tc-live-dot"></span>
-</div>`;
-        document.body.appendChild(hud);
-        makeDraggable(hud, document.getElementById('tc-rc-drag'));
-        document.getElementById('tc-rc-min').addEventListener('click', function () { setMinimised(!isMinimised); });
-        document.getElementById('tc-rc-close').addEventListener('click', function () { hud.remove(); });
-        document.getElementById('tc-btn-credits').addEventListener('click', function () {
-            document.getElementById('tc-rc-main').style.display = 'none';
-            document.getElementById('tc-rc-credits').style.display = 'flex';
-            document.getElementById('tc-btn-credits').style.display = 'none';
-            document.getElementById('tc-btn-back').style.display = '';
-        });
-        document.getElementById('tc-btn-back').addEventListener('click', function () {
-            document.getElementById('tc-rc-credits').style.display = 'none';
-            document.getElementById('tc-rc-main').style.display = '';
-            document.getElementById('tc-btn-back').style.display = 'none';
-            document.getElementById('tc-btn-credits').style.display = '';
-        });
-        document.getElementById('tc-btn-pause').addEventListener('click', function () {
-            commentaryPaused = !commentaryPaused;
-            updatePauseBtn();
-        });
-        document.getElementById('tc-btn-fix').addEventListener('click', function () {
-            state.windowFixed = !state.windowFixed;
-            updateFixBtn();
-            saveState();
-        });
-        updatePauseBtn();
-        updateFixBtn();
-        if (typeof ResizeObserver !== 'undefined') {
-            const ro = new ResizeObserver(function () {
-                const el = getFeedEl();
-                if (!el) return;
-                const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-                if (nearBottom) el.scrollTop = el.scrollHeight;
-            });
-            ro.observe(hud);
-            const fi = getFeedEl();
-            if (fi) ro.observe(fi);
-        }
-    }
-
-    // ─── Boot ─────────────────────────────────────────────────────────────────────
-    function init () {
-        loadState();
-        commentaryPaused = false;
-        buildHUD();
-        rebuildFeed();
-        renderInfoBar();
-        renderStatus();
-        renderLeaderboard();
-        renderRaceStats();
-        updatePauseBtn();
-        resetTimers();
-        poll();
-        setInterval(poll, POLL_MS);
-    }
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
+    dashAnimId = requestAnimationFrame(step);
+  }
+
+  function stopDashAnim() {
+    if (dashAnimId) { cancelAnimationFrame(dashAnimId); dashAnimId = null; }
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     DRAW FLIGHT PATH
+  ───────────────────────────────────────────────────────────── */
+
+  function drawPath(sk, dk) {
+    const g = document.getElementById('tcfv-pathg');
+    if (!g) return;
+    if (!sk || !dk || sk === dk) { g.innerHTML = ''; stopDashAnim(); return; }
+    const { s, d, c } = buildBez(sk, dk);
+    const pts = [];
+    for (let i = 0; i <= 120; i++) { const p = bPt(i/120, s, c, d); pts.push(`${p.x.toFixed(1)},${p.y.toFixed(1)}`); }
+    const col = TICKETS[S.ticket]?.col || '#fff';
+    g.innerHTML = `<polyline id="tcfv-route-line" points="${pts.join(' ')}" fill="none" stroke="${col}" stroke-width="2" stroke-dasharray="12,8" stroke-linecap="round" opacity="0.65"/>
+<circle cx="${s.x.toFixed(1)}" cy="${s.y.toFixed(1)}" r="5" fill="${DESTS[sk]?.col||'#fff'}" opacity="0.9" filter="url(#gl)"/>
+<circle cx="${d.x.toFixed(1)}" cy="${d.y.toFixed(1)}" r="5" fill="${DESTS[dk]?.col||'#fff'}" opacity="0.9" filter="url(#gl)"/>`;
+    startDashAnim();
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     DRAW PLANE  (SVG path shapes by ticket/plane type)
+  ───────────────────────────────────────────────────────────── */
+
+  function drawPlane(progress, sk, dk) {
+    const g = document.getElementById('tcfv-planeg');
+    if (!g) return;
+    if (!sk || !dk || sk === dk) { g.innerHTML = ''; return; }
+    const { s, d, c } = buildBez(sk, dk);
+    const t = Math.max(0.001, Math.min(0.999, progress));
+    const pos = bPt(t, s, c, d), ang = bAng(t, s, c, d);
+    const plane = TICKETS[S.ticket]?.plane || 'jumbo';
+
+    // White triangle on black circle — clean, visible against the map
+    // Different sizes and proportions per plane type
+    let svgShape;
+    if (plane === 'jumbo') {
+      // Large black circle, wide white triangle (jumbo spread)
+      svgShape = `
+  <circle r="10" fill="black" opacity="0.88"/>
+  <polygon points="0,-7 -5.5,5 5.5,5" fill="white"/>`;
+    } else if (plane === 'private_plane') {
+      // Medium black circle, slim white triangle (private jet)
+      svgShape = `
+  <circle r="8" fill="black" opacity="0.88"/>
+  <polygon points="0,-7 -3.5,5 3.5,5" fill="white"/>`;
     } else {
-        init();
+      // Small black circle, small blunt white triangle + prop tick (airstrip)
+      svgShape = `
+  <circle r="7" fill="black" opacity="0.88"/>
+  <polygon points="0,-5.5 -4,4 4,4" fill="white"/>
+  <line x1="-4" y1="-5.5" x2="4" y2="-5.5" stroke="white" stroke-width="1.5" stroke-linecap="round"/>`;
     }
+
+    g.innerHTML = `<g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${ang.toFixed(1)})">
+  <g filter="url(#gl)">${svgShape}
+  </g>
+</g>`;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     HIGHLIGHT SELECTED DOTS
+  ───────────────────────────────────────────────────────────── */
+
+  function highlightDots(srcK, dstK) {
+    for (const key of Object.keys(DESTS)) {
+      const isSelected = key === srcK || key === dstK;
+      const dotG = document.getElementById(`tcfv-dot-${key}`);
+      if (!dotG) continue;
+      const core = dotG.querySelector('.dot-core');
+      const glow = dotG.querySelector('.dot-glow');
+      const lbl = dotG.querySelector('.dot-lbl');
+      const ring = dotG.querySelector('.dot-ring');
+      if (isSelected) {
+        if (core) { core.setAttribute('r','5'); core.setAttribute('opacity','1'); }
+        if (glow) { glow.setAttribute('r','16'); glow.setAttribute('opacity','0.28'); }
+        if (lbl) { lbl.setAttribute('opacity','1'); lbl.setAttribute('font-size','11'); lbl.setAttribute('font-weight','bold'); }
+        if (ring) { ring.setAttribute('opacity','1'); ring.setAttribute('stroke-width','1.4'); }
+      } else {
+        if (core) { core.setAttribute('r','3.5'); core.setAttribute('opacity','0.85'); }
+        if (glow) { glow.setAttribute('r','10'); glow.setAttribute('opacity','0.08'); }
+        if (lbl) { lbl.setAttribute('opacity','0.7'); lbl.setAttribute('font-size','9'); lbl.setAttribute('font-weight','normal'); }
+        if (ring) { ring.setAttribute('opacity','0.4'); ring.setAttribute('stroke-width','0.8'); }
+      }
+    }
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     ELEMENT CACHE
+  ───────────────────────────────────────────────────────────── */
+
+  let el = {};
+
+  /* ─────────────────────────────────────────────────────────────
+     STATS UPDATE
+  ───────────────────────────────────────────────────────────── */
+
+  function updateStats(progress, timeLeftMs) {
+    if (!el.status) return;
+    const phase = getPhase(progress);
+    const src = DESTS[S.src], dst = S.dst ? DESTS[S.dst] : (S.previewDst ? DESTS[S.previewDst] : null);
+    const tkt = TICKETS[S.ticket] || TICKETS.standard;
+    const totalDist = src && dst ? haversine(src, dst) : 0;
+    let distRem;
+    if (S.flying && timeLeftMs !== undefined && timeLeftMs <= 60000 && totalDist > 0) {
+      // Smoothly interpolate from ~5 miles down to 0 over final 60 seconds
+      distRem = Math.max(0, Math.round(5 * (timeLeftMs / 60000)));
+    } else if (S.flying && progress > 0 && progress < 1 && totalDist > 0) {
+      distRem = Math.round(totalDist * (1 - progress));
+    } else {
+      distRem = totalDist;
+    }
+    const ph = PHASE_CFG[phase] || PHASE_CFG.ready;
+
+    el.status.textContent = ph.label;
+    el.status.style.color = ph.col;
+    el.destname.textContent = dst ? `${dst.city}, ${dst.country}` : '—';
+    el.dist.textContent = totalDist > 0 ? `${distRem.toLocaleString()} mi` : '— mi';
+
+    const dstKey = S.flying ? S.dst : S.previewDst;
+    const srcKey = S.src;
+    const dur = (srcKey && dstKey) ? getDur(srcKey, dstKey, S.ticket) : 0;
+    el.eta.textContent = S.flying && timeLeftMs > 0 ? fmtTime(timeLeftMs) : (dur > 0 ? fmtTime(dur) : '—');
+
+    el.alt.textContent = `${getAlt(progress, timeLeftMs).toLocaleString()} ft`;
+    el.spd.textContent = `${getSpd(progress, tkt.speed)} mph`;
+    el.fuel.textContent = `${getFuel(Math.max(0, progress), S.ticket).toLocaleString()} lbs`;
+    el.tkt.textContent = tkt.label;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     COMMENTARY — fires once per phase, persists across refresh
+  ───────────────────────────────────────────────────────────── */
+
+  let phRunId = {};
+
+  function addLog(text) {
+    S.log.push(text);
+    if (S.log.length > 30) S.log.shift();
+    renderLog();
+  }
+
+  function renderLog() {
+    if (!el.log) return;
+    const lines = S.log.slice(-8);
+    el.log.innerHTML = lines.map((t, i) =>
+      `<div class="tl${i === lines.length-1 ? ' tln' : ''}">&rsaquo; ${t.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>`
+    ).join('');
+    el.log.scrollTop = el.log.scrollHeight;
+  }
+
+  // Fire commentary messages for a phase, staggered — only once per flight per phase
+  function triggerComm(phase, params) {
+    if (S.phasesTriggered[phase]) return; // already fired this phase this flight
+    S.phasesTriggered[phase] = true;
+    saveS();
+    const msgs = COMMENTARY[phase];
+    if (!msgs) return;
+    const rid = (phRunId[phase] = (phRunId[phase] || 0) + 1);
+    msgs.forEach((fn, i) => {
+      setTimeout(() => {
+        if (phRunId[phase] === rid) addLog(fn(params));
+      }, i * 3800);
+    });
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     FLIGHT LOOP
+  ───────────────────────────────────────────────────────────── */
+
+  /* ─────────────────────────────────────────────────────────────
+     INFLIGHT RANDOM SCHEDULER
+     Picks a random subset of funny messages and spaces them
+     evenly across the full inflight period. Persists to storage
+     so a page refresh shows the same messages without repeats.
+  ───────────────────────────────────────────────────────────── */
+
+  function buildInflightSchedule() {
+    if (S.inflightSchedule) return; // already built for this flight
+    const total = S.arrTime - S.depTime;
+    const inflightStart = S.depTime + total * 0.05;
+    const inflightEnd = S.depTime + total * 0.75;
+    const duration = inflightEnd - inflightStart;
+
+    // Pick 3–5 random messages from the pool (never more than pool size)
+    const poolSize = INFLIGHT_RANDOM.length;
+    const pickCount = Math.min(poolSize, 3 + Math.floor(Math.random() * 3));
+    const indices = Array.from({ length: poolSize }, (_, i) => i);
+    for (let i = indices.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [indices[i], indices[j]] = [indices[j], indices[i]];
+    }
+    const chosen = indices.slice(0, pickCount).sort((a, b) => a - b);
+
+    // Build schedule — fixed-start messages at beginning, random in middle, fixed-end near end
+    const schedule = [];
+    const fixedStartCount = INFLIGHT_FIXED_START.length;
+    const fixedEndCount = INFLIGHT_FIXED_END.length;
+    const totalSlots = fixedStartCount + pickCount + fixedEndCount;
+    const slotSize = duration / (totalSlots + 1);
+
+    let slot = 1;
+    // Fixed start messages
+    for (let i = 0; i < fixedStartCount; i++) {
+      schedule.push({ pool:'fixed_start', idx:i, fireAt: inflightStart + slotSize * slot, fired:false });
+      slot++;
+    }
+    // Random pool messages
+    for (const idx of chosen) {
+      schedule.push({ pool:'random', idx, fireAt: inflightStart + slotSize * slot, fired:false });
+      slot++;
+    }
+    // Fixed end messages
+    for (let i = 0; i < fixedEndCount; i++) {
+      schedule.push({ pool:'fixed_end', idx:i, fireAt: inflightStart + slotSize * slot, fired:false });
+      slot++;
+    }
+
+    S.inflightSchedule = schedule;
+    saveS();
+  }
+
+  let loopTmr = null;
+  let turbFired = false;
+
+  function startLoop() {
+    if (loopTmr) clearTimeout(loopTmr);
+    tick();
+  }
+
+  function tick() {
+    if (!S.flying || !S.dst) {
+      updateStats(0, 0);
+      loopTmr = setTimeout(tick, 2000);
+      return;
+    }
+
+    const now = Date.now();
+    const total = S.arrTime - S.depTime;
+    const elapsed = now - S.depTime;
+    const progress = Math.min(1, Math.max(0, elapsed / total));
+    const timeLeft = Math.max(0, S.arrTime - now);
+    const phase = getPhase(progress);
+    const altNow = getAlt(progress, timeLeft);
+
+    const arrDate = new Date(S.arrTime);
+    const arrivalTime = `${String(arrDate.getHours()).padStart(2,'0')}:${String(arrDate.getMinutes()).padStart(2,'0')}`;
+
+    const params = {
+      name: S.player,
+      src: DESTS[S.src]?.city || 'the airport',
+      dst: DESTS[S.dst]?.city || 'your destination',
+      eta: fmtTime(timeLeft),
+      speed: TICKETS[S.ticket]?.speed || 545,
+      maxAlt: TICKETS[S.ticket]?.maxAlt || 32000,
+      arrivalTime,
+      isTornCity: S.dst === 'torn',
+    };
+
+    // Phase transition commentary (fires only once per phase)
+    // Note: 'landing' phase commentary is handled separately via landing_screech at 60s mark
+    // Note: 'inflight' phase is handled by the random scheduler below
+    // Note: 'arrived' phase is handled manually below to ensure messages are saved before state resets
+    if (phase !== S.prevPhase) {
+      S.prevPhase = phase;
+      if (phase !== 'landing' && phase !== 'inflight' && phase !== 'arrived') triggerComm(phase, params);
+      if (phase === 'inflight') {
+        // Mark as triggered so triggerComm won't double-fire, build schedule
+        S.phasesTriggered.inflight = true;
+        buildInflightSchedule();
+      }
+
+      if (phase === 'arrived') {
+        // Handle arrived manually: log all messages with staggered delays,
+        // then reset state ONLY after the last message has been logged and saved.
+        S.phasesTriggered.arrived = true;
+        const arrivedFns = COMMENTARY.arrived;
+        const capturedParams = Object.assign({}, params); // snapshot before any state change
+        arrivedFns.forEach((fn, i) => {
+          setTimeout(() => {
+            addLog(fn(capturedParams));
+            if (i === arrivedFns.length - 1) {
+              // All arrived messages are now in the log — safe to reset and save
+              const newSrc = S.dst;
+              S.flying = false;
+              S.src = newSrc;
+              S.dst = null;
+              S.phasesTriggered = {};
+              S.inflightSchedule = null;
+              turbFired = false;
+              saveS();
+              drawPath(null, null);
+              drawPlane(0, S.src, S.src);
+              highlightDots(S.src, null);
+              updateStats(0, 0);
+            }
+          }, i * 3800);
+        });
+        // Keep ticking slowly until state has fully reset
+        loopTmr = setTimeout(tick, arrivedFns.length * 3800 + 2500);
+        return;
+      }
+    }
+
+    // Fire scheduled inflight messages
+    if (phase === 'inflight' && S.inflightSchedule) {
+      let scheduleChanged = false;
+      for (const item of S.inflightSchedule) {
+        if (!item.fired && now >= item.fireAt) {
+          item.fired = true;
+          scheduleChanged = true;
+          let fn;
+          if (item.pool === 'fixed_start') fn = INFLIGHT_FIXED_START[item.idx];
+          else if (item.pool === 'fixed_end') fn = INFLIGHT_FIXED_END[item.idx];
+          else fn = INFLIGHT_RANDOM[item.idx];
+          if (fn) addLog(fn(params));
+        }
+      }
+      if (scheduleChanged) saveS();
+    }
+
+    // Random turbulence during inflight or start of descent — fires once per flight
+    if (!S.turbTriggered && (phase === 'inflight' || phase === 'descent') && Math.random() < 0.003) {
+      S.turbTriggered = true;
+      triggerComm('turbulence', params);
+      saveS();
+    }
+
+    // Screech of tyres fires when altitude hits 0 — 60 seconds before end of flight
+    if (timeLeft <= 60000 && S.flying && !S.phasesTriggered.landing_screech) {
+      S.phasesTriggered.landing_screech = true;
+      triggerComm('landing', params);
+      saveS();
+    }
+
+    updateStats(progress, timeLeft);
+    drawPlane(progress, S.src, S.dst);
+    loopTmr = setTimeout(tick, 1000);
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     BUILD HUD
+  ───────────────────────────────────────────────────────────── */
+
+  function buildHUD() {
+    const panel = document.createElement('div');
+    panel.id = 'tcfv';
+    panel.style.width = S.pw + 'px';
+    panel.style.height = S.ph_panel + 'px';
+
+    panel.innerHTML = `
+<div id="tcfv-hdr">
+  <span id="tcfv-title">&#9992;&nbsp;TORN CITY FLIGHT VISUALISER</span>
+  <div id="tcfv-hbtns">
+    <button class="thb ta" id="thb-main" title="Flight view">&#9992;</button>
+    <button class="thb" id="thb-set" title="Settings">&#9881;</button>
+    <button class="thb" id="thb-cred" title="Credits">&#9733;</button>
+    <button class="thb" id="thb-radar" title="Toggle Radar / Normal mode">&#9685;</button>
+    <button class="thb" id="thb-min" title="Minimise">&#8212;</button>
+  </div>
+</div>
+<div id="tcfv-bod">
+
+  <div id="tcfv-main" class="tcfv-pg">
+    <div id="tcfv-mapbox">
+      <svg id="tcfv-svg" viewBox="0 0 ${MAP_W} ${MAP_H}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">${buildMapSVG()}</svg>
+    </div>
+    <div id="tcfv-lower">
+      <div id="tcfv-stats">
+        <div class="ts"><span class="tsl">Status</span>   <span class="tsv" id="ts-status">READY</span></div>
+        <div class="ts"><span class="tsl">Destination</span> <span class="tsv" id="ts-destname">&#8212;</span></div>
+        <div class="ts"><span class="tsl">Distance</span> <span class="tsv" id="ts-dist">&#8212; mi</span></div>
+        <div class="ts"><span class="tsl">ETA</span>      <span class="tsv" id="ts-eta">&#8212;</span></div>
+        <div class="ts"><span class="tsl">Altitude</span> <span class="tsv" id="ts-alt">0 ft</span></div>
+        <div class="ts"><span class="tsl">Airspeed</span> <span class="tsv" id="ts-spd">&#8212; mph</span></div>
+        <div class="ts"><span class="tsl">Fuel</span>     <span class="tsv" id="ts-fuel">&#8212; lbs</span></div>
+        <div class="ts"><span class="tsl">Ticket</span>   <span class="tsv" id="ts-tkt">Standard</span></div>
+      </div>
+      <div id="tcfv-atc">
+        <div id="tcfv-atc-ttl">&#128251; ATC / FLIGHT DECK</div>
+        <div id="tcfv-log"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tcfv-set" class="tcfv-pg" style="display:none">
+    <h3>&#9881; Settings</h3>
+    <p>An <strong>API key</strong> lets the visualiser read your live flight data directly from the Torn City servers, giving accurate real departure and arrival times.</p>
+    <p>To get your API key: log in to Torn City &rarr; <strong>Preferences</strong> &rarr; <strong>API Keys</strong> tab &rarr; create a new key with at least <em>Public Access</em> enabled. It is a 16-character alphanumeric string.</p>
+    <label for="tcfv-api-inp">API Key</label><br>
+    <input id="tcfv-api-inp" type="password" placeholder="Paste your Torn API key here" autocomplete="off" spellcheck="false">
+    <br><br>
+    <button class="tcfv-btn" id="tcfv-api-save">&#128190; Save Key</button>
+    <button class="tcfv-btn" id="tcfv-api-test">&#128279; Test Connection</button>
+    <p id="tcfv-api-msg"></p>
+    <hr>
+    <p class="note">Your API key is stored locally in Tampermonkey's secure storage and is only ever sent to api.torn.com. It is never transmitted anywhere else.</p>
+  </div>
+
+  <div id="tcfv-cred" class="tcfv-pg" style="display:none">
+    <h3>&#9733; Credits</h3>
+    <p class="big-t">TORN CITY<br>Flight Visualiser</p>
+    <p class="ver-t">Version 7.0.0</p>
+    <p>Designed &amp; developed by</p>
+    <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
+    <hr>
+    <p class="note">Built for the Torn City community. Not affiliated with Torn Ltd.<br>
+    Flight timings, altimeter, airspeed, fuel loads and ATC commentary are approximations for entertainment purposes only.</p>
+  </div>
+
+</div>
+<div id="tcfv-resize-handle" title="Drag to resize"></div>`;
+
+    document.body.appendChild(panel);
+
+    el = {
+      panel,
+      bod: panel.querySelector('#tcfv-bod'),
+      status: panel.querySelector('#ts-status'),
+      destname: panel.querySelector('#ts-destname'),
+      dist: panel.querySelector('#ts-dist'),
+      eta: panel.querySelector('#ts-eta'),
+      alt: panel.querySelector('#ts-alt'),
+      spd: panel.querySelector('#ts-spd'),
+      fuel: panel.querySelector('#ts-fuel'),
+      tkt: panel.querySelector('#ts-tkt'),
+      log: panel.querySelector('#tcfv-log'),
+      pgMain: panel.querySelector('#tcfv-main'),
+      pgSet: panel.querySelector('#tcfv-set'),
+      pgCred: panel.querySelector('#tcfv-cred'),
+      svg: panel.querySelector('#tcfv-svg'),
+    };
+
+    panel.style.left = S.px + 'px';
+    panel.style.top = S.py + 'px';
+
+    makeDrag(panel, panel.querySelector('#tcfv-hdr'));
+    makeResize(panel, panel.querySelector('#tcfv-resize-handle'));
+
+    panel.querySelector('#thb-min').addEventListener('click', doMin);
+    panel.querySelector('#thb-radar').addEventListener('click', doRadar);
+    panel.querySelector('#thb-main').addEventListener('click', () => showPg('main'));
+    panel.querySelector('#thb-set').addEventListener('click', () => showPg('set'));
+    panel.querySelector('#thb-cred').addEventListener('click', () => showPg('cred'));
+
+    const apiInp = panel.querySelector('#tcfv-api-inp');
+    apiInp.value = S.apiKey || '';
+    panel.querySelector('#tcfv-api-save').addEventListener('click', () => {
+      S.apiKey = apiInp.value.trim(); saveS();
+      const m = panel.querySelector('#tcfv-api-msg');
+      m.textContent = 'Key saved successfully.'; m.style.color = '#44ff88';
+    });
+    panel.querySelector('#tcfv-api-test').addEventListener('click', () =>
+      testApiKey(apiInp.value.trim(), panel.querySelector('#tcfv-api-msg'))
+    );
+
+    if (S.min) doMin(true);
+    // Restore radar mode
+    try { if (GM_getValue('tcfv_radar', false)) doRadar(); } catch(e) {}
+    showPg(S.page || 'main');
+  }
+
+  function showPg(pg) {
+    S.page = pg;
+    el.pgMain.style.display = pg === 'main' ? 'flex' : 'none';
+    el.pgSet.style.display = pg === 'set' ? 'block' : 'none';
+    el.pgCred.style.display = pg === 'cred' ? 'block' : 'none';
+    document.querySelectorAll('.thb').forEach(b => b.classList.remove('ta'));
+    const map = { main:'#thb-main', set:'#thb-set', cred:'#thb-cred' };
+    document.querySelector(map[pg])?.classList.add('ta');
+    saveS();
+  }
+
+  let radarMode = false;
+
+  function doRadar() {
+    radarMode = !radarMode;
+    const panel = document.getElementById('tcfv');
+    if (radarMode) {
+      panel.classList.add('radar-mode');
+      document.querySelector('#thb-radar').classList.add('ta');
+    } else {
+      panel.classList.remove('radar-mode');
+      document.querySelector('#thb-radar').classList.remove('ta');
+    }
+    try { GM_setValue('tcfv_radar', radarMode); } catch(e) {}
+  }
+
+  function doMin(silent) {
+    S.min = !S.min;
+    const panel = el.panel;
+    const resizeHandle = document.querySelector('#tcfv-resize-handle');
+    if (S.min) {
+      // Collapse to just the header bar
+      el.bod.style.display = 'none';
+      resizeHandle.style.display = 'none';
+      panel.style.height = 'auto';
+      panel.style.minHeight = '0';
+      panel.style.resize = 'none';
+    } else {
+      // Restore to full size
+      el.bod.style.display = 'block';
+      resizeHandle.style.display = 'block';
+      panel.style.height = S.ph_panel + 'px';
+      panel.style.minHeight = '420px';
+    }
+    document.querySelector('#thb-min').innerHTML = S.min ? '&#9633;' : '&#8212;';
+    if (!silent) saveS();
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     DRAG & RESIZE
+  ───────────────────────────────────────────────────────────── */
+
+  function makeDrag(panel, handle) {
+    let drag = false, ox = 0, oy = 0;
+    handle.addEventListener('mousedown', e => {
+      if (e.target.closest('button')) return;
+      drag = true; ox = e.clientX - panel.offsetLeft; oy = e.clientY - panel.offsetTop;
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', e => {
+      if (!drag) return;
+      const nx = e.clientX - ox;
+      const ny = e.clientY - oy;
+      panel.style.left = nx + 'px'; panel.style.top = ny + 'px';
+      S.px = nx; S.py = ny;
+    });
+    document.addEventListener('mouseup', () => { if (drag) { drag = false; saveS(); } });
+  }
+
+  function makeResize(panel, handle) {
+    let resz = false, sx = 0, sy = 0, sw = 0, sh = 0;
+    handle.addEventListener('mousedown', e => {
+      resz = true; sx = e.clientX; sy = e.clientY;
+      sw = panel.offsetWidth; sh = panel.offsetHeight;
+      e.preventDefault(); e.stopPropagation();
+    });
+    document.addEventListener('mousemove', e => {
+      if (!resz) return;
+      const nw = Math.max(500, sw + (e.clientX - sx));
+      const nh = Math.max(420, sh + (e.clientY - sy));
+      panel.style.width = nw + 'px'; panel.style.height = nh + 'px';
+      S.pw = nw; S.ph_panel = nh;
+    });
+    document.addEventListener('mouseup', () => { if (resz) { resz = false; saveS(); } });
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     PREVIEW DESTINATION  (immediate update when dest clicked)
+  ───────────────────────────────────────────────────────────── */
+
+  function previewDest(dstK) {
+    if (S.flying) return;
+    S.previewDst = dstK;
+    drawPath(S.src, dstK);
+    // Zoom map to frame the route
+    if (el.svg) el.svg.setAttribute('viewBox', getZoomedViewBox(S.src, dstK));
+    highlightDots(S.src, dstK);
+    updateStats(0, 0);
+    saveS();
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     TORN PAGE DETECTION
+  ───────────────────────────────────────────────────────────── */
+
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  function matchDest(text) {
+    if (!text) return null;
+    const t = norm(text);
+    for (const [k, d] of Object.entries(DESTS)) {
+      if (t.includes(norm(d.city)) || t.includes(norm(d.country)) || t.includes(norm(d.label))) return k;
+    }
+    return null;
+  }
+
+  function matchTicket(text) {
+    const t = (text || '').toLowerCase();
+    if (t.includes('private') && t.includes('jet')) return 'private';
+    if (t.includes('airstrip') || t.includes('private plane')) return 'airstrip';
+    if (t.includes('business')) return 'business';
+    return 'standard';
+  }
+
+  function readSelectedDest() {
+    const sels = [
+      '[class*="travel"][class*="active"]', '[class*="destination"][class*="active"]',
+      '[class*="country"][class*="active"]', '[class*="selected"]',
+    ];
+    for (const sel of sels) {
+      for (const node of document.querySelectorAll(sel)) {
+        const m = matchDest(node.textContent);
+        if (m) return m;
+      }
+    }
+    return null;
+  }
+
+  function readSelectedTicket() {
+    const sels = [
+      '[class*="ticket"][class*="active"]', '[class*="class"][class*="active"]',
+      '[class*="method"][class*="active"]', '[class*="travel-method"][class*="active"]',
+    ];
+    for (const sel of sels) {
+      const found = document.querySelector(sel);
+      if (found) return matchTicket(found.textContent);
+    }
+    return null;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     HOOK — capture-phase click listener
+  ───────────────────────────────────────────────────────────── */
+
+  function hookClicks() {
+    document.addEventListener('click', e => {
+      let t = e.target;
+      for (let i = 0; i < 5; i++) {
+        if (!t) break;
+        const txt = (t.textContent || '').trim().toLowerCase();
+        const cls = (t.className || '').toString().toLowerCase();
+        const id = (t.id || '').toLowerCase();
+
+        // Destination dot click → preview immediately
+        if (!S.flying && (cls.includes('country') || cls.includes('destination') || cls.includes('travel') || cls.includes('city') || cls.includes('location'))) {
+          const dm = matchDest(t.textContent);
+          if (dm && dm !== S.src) { previewDest(dm); }
+        }
+
+        // Ticket type selection → update ticket on visualiser immediately
+        if (cls.includes('ticket') || cls.includes('class') || cls.includes('method') || cls.includes('airstrip')) {
+          const tk = matchTicket(t.textContent);
+          if (S.ticket !== tk) {
+            S.ticket = tk;
+            if (el.tkt) el.tkt.textContent = TICKETS[tk]?.label || tk;
+            if (S.previewDst && !S.flying) {
+              drawPath(S.src, S.previewDst);
+              updateStats(0, 0);
+            }
+            saveS();
+          }
+        }
+
+        // Fly button
+        if (txt === 'fly' || txt === 'fly now' || txt === 'fly!' || txt === 'take off' ||
+          cls.includes('fly-btn') || cls.includes('flybtn') || id.includes('fly') || id.includes('takeoff')) {
+          const dst = readSelectedDest() || S.previewDst || S.dst;
+          const tkt = readSelectedTicket() || S.ticket;
+          if (dst) { startFlight(dst, tkt, S.src !== 'torn'); return; }
+        }
+
+        t = t.parentElement;
+      }
+    }, true);
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     NETWORK HOOK  (XHR + fetch intercept)
+  ───────────────────────────────────────────────────────────── */
+
+  function hookNetwork() {
+    const oOpen = XMLHttpRequest.prototype.open;
+    const oSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function(m, u, ...r) { this._turl = u; return oOpen.apply(this, [m, u, ...r]); };
+    XMLHttpRequest.prototype.send = function(...a) {
+      this.addEventListener('load', function() {
+        try { handleNetResponse(this._turl, JSON.parse(this.responseText)); } catch(e) {}
+      });
+      return oSend.apply(this, a);
+    };
+    const oFetch = window.fetch;
+    window.fetch = function(...a) {
+      const url = typeof a[0] === 'string' ? a[0] : (a[0]?.url || '');
+      const pr = oFetch.apply(this, a);
+      pr.then(r => r.clone().text().then(t => {
+        try { handleNetResponse(url, JSON.parse(t)); } catch(e) {}
+      })).catch(() => {});
+      return pr;
+    };
+  }
+
+  function handleNetResponse(url, data) {
+    if (!data) return;
+    const travel = data.travel || data.travelling || null;
+    if (!travel) return;
+    const dest = travel.destination || travel.dest || '';
+    const method = travel.method || travel.ticket || '';
+    const dep = (travel.departed || 0) * 1000;
+    const arr = (travel.timestamp || 0) * 1000;
+    if (!dest || !dep || !arr) return;
+    const dk = matchDest(dest), tk = matchTicket(method);
+    if (dk && dk !== 'torn') {
+      startFlightTimes('torn', dk, tk, dep, arr, false);
+    } else if ((!dk || dk === 'torn') && S.src !== 'torn') {
+      startFlightTimes(S.src, 'torn', tk, dep, arr, true);
+    }
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     MUTATION OBSERVER
+  ───────────────────────────────────────────────────────────── */
+
+  function watchDOM() {
+    let db;
+    const obs = new MutationObserver(() => {
+      clearTimeout(db);
+      db = setTimeout(() => {
+        // Check for ticket type changes
+        const tk = readSelectedTicket();
+        if (tk && tk !== S.ticket) {
+          S.ticket = tk;
+          if (el.tkt) el.tkt.textContent = TICKETS[tk]?.label || tk;
+          if (S.previewDst && !S.flying) {
+            drawPath(S.src, S.previewDst);
+            updateStats(0, 0);
+          }
+          saveS();
+        }
+
+        // Check for flying text appearing in DOM
+        if (!S.flying) {
+          const body = document.body.textContent;
+          const m = body.match(/(?:travelling|traveling|flying)\s+to\s+([A-Za-z\s]{3,30})(?:[.,\n]|$)/i);
+          if (m) {
+            const dk = matchDest(m[1]);
+            if (dk && dk !== S.dst) {
+              const dur = getDur(S.src, dk, S.ticket);
+              startFlightTimes(S.src, dk, S.ticket, Date.now(), Date.now() + dur, S.src !== 'torn');
+            }
+          }
+        }
+      }, 500);
+    });
+    obs.observe(document.body, { childList:true, subtree:true, characterData:true, attributes:true, attributeFilter:['class'] });
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     START FLIGHT
+  ───────────────────────────────────────────────────────────── */
+
+  function startFlight(dk, tk, isReturn) {
+    const dur = getDur(S.src, dk, tk);
+    startFlightTimes(S.src, dk, tk, Date.now(), Date.now() + dur, isReturn);
+  }
+
+  function startFlightTimes(sk, dk, tk, dep, arr, isReturn) {
+    S.src = sk; S.dst = dk; S.ticket = tk;
+    S.depTime = dep; S.arrTime = arr;
+    S.flying = true; S.isReturn = isReturn;
+    S.prevPhase = ''; S.phasesTriggered = {}; S.turbTriggered = false;
+    turbFired = false;
+    S.inflightSchedule = null;
+    S.log = [];
+    S.previewDst = null;
+    saveS();
+    drawPath(sk, dk);
+    if (el.svg) el.svg.setAttribute('viewBox', getZoomedViewBox(sk, dk));
+    highlightDots(sk, dk);
+    if (isReturn) {
+      const p = {
+        name: S.player,
+        src: DESTS[sk]?.city || '',
+        dst: DESTS[dk]?.city || 'Torn City',
+        eta: fmtTime(arr - Date.now()),
+        speed: TICKETS[tk]?.speed || 545,
+        maxAlt: TICKETS[tk]?.maxAlt || 32000,
+        arrivalTime: (() => { const d = new Date(arr); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; })(),
+        isTornCity: dk === 'torn',
+      };
+      triggerComm('return_start', p);
+      // Suppress the standard takeoff ATC message — return_start already has one
+      S.phasesTriggered.takeoff = true;
+      saveS();
+    }
+    startLoop();
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     TORN API
+  ───────────────────────────────────────────────────────────── */
+
+  function apiGet(key, cb) {
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: `https://api.torn.com/user/?selections=travel,basic&key=${key}`,
+      onload: r => { try { cb(null, JSON.parse(r.responseText)); } catch(e) { cb(e); } },
+      onerror: e => cb(e),
+    });
+  }
+
+  function testApiKey(key, msgEl) {
+    if (!key) { msgEl.textContent = 'Please enter an API key first.'; return; }
+    msgEl.textContent = 'Testing\u2026'; msgEl.style.color = '#aaa';
+    apiGet(key, (err, data) => {
+      if (err || data?.error) {
+        msgEl.textContent = `Error: ${data?.error?.error || String(err)}`;
+        msgEl.style.color = '#ff4444';
+      } else {
+        S.player = data.name || S.player;
+        msgEl.textContent = `Connected as: ${data.name} [${data.player_id}]`;
+        msgEl.style.color = '#44ff88';
+      }
+    });
+  }
+
+  function initFromApi() {
+    if (!S.apiKey) return;
+    apiGet(S.apiKey, (err, data) => {
+      if (err || !data || data.error) return;
+      if (data.name) S.player = data.name;
+      const tr = data.travel;
+      if (!tr || !tr.departed || !tr.timestamp) return;
+      if (Date.now() > tr.timestamp * 1000) return;
+      const dk = matchDest(tr.destination || '');
+      const tk = matchTicket(tr.method || '');
+      const dep = tr.departed * 1000, arr = tr.timestamp * 1000;
+      if (dk && dk !== 'torn') {
+        startFlightTimes('torn', dk, tk, dep, arr, false);
+      } else if (S.src !== 'torn') {
+        startFlightTimes(S.src, 'torn', tk, dep, arr, true);
+      }
+    });
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     CSS
+  ───────────────────────────────────────────────────────────── */
+
+  function injectCSS() {
+    GM_addStyle(`
+#tcfv {
+  position: fixed;
+  z-index: 999999;
+  min-width: 500px;
+  min-height: 420px;
+  background: #0a131f;
+  border: 1px solid #1e3d5c;
+  border-radius: 8px;
+  box-shadow: 0 6px 40px rgba(0,80,160,.5), inset 0 1px 0 rgba(100,180,255,.06);
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 12px;
+  color: #b8d4ee;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  resize: none;
+}
+#tcfv-hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  background: linear-gradient(90deg,#070f1a,#0d1f35,#070f1a);
+  border-radius: 8px 8px 0 0;
+  border-bottom: 1px solid #1a3550;
+  cursor: move;
+  user-select: none;
+  flex-shrink: 0;
+}
+#tcfv-title {
+  font-size: 10px;
+  font-weight: bold;
+  color: #5ab0e8;
+  letter-spacing: 3px;
+  text-shadow: 0 0 10px rgba(80,180,255,.35);
+}
+#tcfv-hbtns { display: flex; gap: 3px; }
+.thb {
+  background: #0f1e30;
+  border: 1px solid #1e3d5c;
+  color: #5a8ab8;
+  border-radius: 3px;
+  padding: 1px 7px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.7;
+  transition: background .15s, color .15s;
+}
+.thb:hover, .ta { background: #1a3a5a; color: #8ac8ff; border-color: #3a6a9a; }
+#tcfv-bod { display: block; flex: 1; overflow: hidden; }
+.tcfv-pg { height: 100%; }
+#tcfv-main { display: flex; flex-direction: column; height: 100%; }
+#tcfv-mapbox { flex: 1; overflow: hidden; background: #06101c; border-bottom: 1px solid #0e2035; min-height: 0; }
+#tcfv-svg { width: 100%; height: 100%; display: block; transition: all 0.5s ease; }
+#tcfv-lower { height: 170px; flex-shrink: 0; display: flex; overflow: hidden; }
+#tcfv-stats { width: 220px; min-width: 220px; padding: 8px 10px; border-right: 1px solid #0e2035; overflow: hidden; }
+.ts { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; padding-bottom: 3px; border-bottom: 1px solid #0c1a28; }
+.tsl { font-size: 9px; color: #3a6a8a; letter-spacing: 1.5px; text-transform: uppercase; white-space: nowrap; }
+.tsv { font-size: 11px; color: #6abcee; font-weight: bold; text-align: right; }
+#tcfv-atc { flex: 1; display: flex; flex-direction: column; padding: 6px 8px; overflow: hidden; min-width: 0; }
+#tcfv-atc-ttl { font-size: 9px; color: #3a6a8a; letter-spacing: 2px; text-transform: uppercase; padding-bottom: 4px; margin-bottom: 4px; border-bottom: 1px solid #0e2035; flex-shrink: 0; }
+#tcfv-log { flex: 1; overflow-y: auto; font-size: 10.5px; color: #8ab8d8; line-height: 1.65; }
+#tcfv-log::-webkit-scrollbar { width: 3px; }
+#tcfv-log::-webkit-scrollbar-thumb { background: #1e3d5c; border-radius: 2px; }
+.tl { padding: 1px 0; border-bottom: 1px dotted #08121e; }
+.tln { color: #c8e890 !important; }
+#tcfv-set, #tcfv-cred { padding: 14px 16px; overflow-y: auto; height: 100%; box-sizing: border-box; }
+#tcfv-set h3, #tcfv-cred h3 { color: #5ab0e8; font-size: 11px; margin: 0 0 12px; border-bottom: 1px solid #1e3d5c; padding-bottom: 6px; letter-spacing: 2px; text-transform: uppercase; }
+#tcfv-set p, #tcfv-cred p { margin: 8px 0; color: #8ab8d8; font-size: 11px; line-height: 1.65; }
+#tcfv-set label { color: #4a7a9a; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
+#tcfv-api-inp { width: 92%; margin: 6px 0; padding: 5px 8px; background: #0c1a28; color: #b8d4ee; border: 1px solid #1e3d5c; border-radius: 4px; font-family: 'Courier New', monospace; font-size: 12px; outline: none; }
+#tcfv-api-inp:focus { border-color: #3a6a9a; }
+#tcfv-api-msg { font-size: 11px; min-height: 18px; margin: 6px 0; }
+.tcfv-btn { background: #0e2035; border: 1px solid #1e3d5c; color: #5ab0e8; border-radius: 4px; padding: 4px 11px; cursor: pointer; font-size: 11px; margin-right: 6px; font-family: monospace; transition: background .15s; }
+.tcfv-btn:hover { background: #1a3a5a; }
+hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
+.note { color: #445566 !important; font-size: 11px !important; line-height: 1.6 !important; }
+.big-t { font-size: 18px; font-weight: bold; color: #5ab0e8 !important; line-height: 1.4 !important; letter-spacing: 1px; }
+.ver-t { font-size: 11px; color: #3a6a8a !important; margin-bottom: 14px !important; }
+#tcfv-author { display: inline-block; margin: 6px 0; color: #44aaff; font-size: 16px; font-weight: bold; text-decoration: none; letter-spacing: 1px; }
+#tcfv-author:hover { color: #88ccff; text-decoration: underline; }
+#tcfv-resize-handle {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 40%, #1e3d5c 40%, #1e3d5c 55%, transparent 55%, transparent 70%, #1e3d5c 70%, #1e3d5c 85%, transparent 85%);
+  border-radius: 0 0 8px 0;
+  opacity: 0.7;
+}
+#tcfv-resize-handle:hover { opacity: 1; }
+
+/* ── RADAR / CRT MODE ── */
+#tcfv.radar-mode {
+  background: #000a00;
+  border-color: #00ff44;
+  box-shadow: 0 0 30px rgba(0,255,68,.35), 0 0 60px rgba(0,255,68,.15), inset 0 0 20px rgba(0,80,0,.4);
+}
+#tcfv.radar-mode::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.18) 2px, rgba(0,0,0,.18) 4px);
+  pointer-events: none;
+  z-index: 1000000;
+  border-radius: 8px;
+}
+#tcfv.radar-mode #tcfv-hdr {
+  background: linear-gradient(90deg,#000a00,#001500,#000a00);
+  border-bottom-color: #004400;
+}
+#tcfv.radar-mode #tcfv-title { color: #00ff44; text-shadow: 0 0 12px #00ff44; }
+#tcfv.radar-mode .thb { background: #001200; border-color: #004400; color: #00cc33; }
+#tcfv.radar-mode .thb:hover,#tcfv.radar-mode .ta { background: #002800; color: #00ff44; border-color: #00aa33; }
+#tcfv.radar-mode #tcfv-mapbox { background: #000800; }
+#tcfv.radar-mode #tcfv-svg { filter: sepia(1) saturate(4) hue-rotate(90deg) brightness(0.85); }
+#tcfv.radar-mode #tcfv-lower,#tcfv.radar-mode #tcfv-set,#tcfv.radar-mode #tcfv-cred { background: #000a00; }
+#tcfv.radar-mode .ts { border-bottom-color: #002200; }
+#tcfv.radar-mode .tsl { color: #006622; }
+#tcfv.radar-mode .tsv { color: #00ff44; text-shadow: 0 0 6px #00ff44; }
+#tcfv.radar-mode #tcfv-atc-ttl { color: #006622; border-bottom-color: #002200; }
+#tcfv.radar-mode #tcfv-log { color: #00cc33; }
+#tcfv.radar-mode .tln { color: #00ff44 !important; text-shadow: 0 0 8px #00ff44; }
+#tcfv.radar-mode #tcfv-set p,#tcfv.radar-mode #tcfv-cred p { color: #00aa33; }
+#tcfv.radar-mode h3 { color: #00ff44 !important; border-bottom-color: #004400 !important; }
+#tcfv.radar-mode #tcfv-api-inp { background: #000a00; color: #00ff44; border-color: #004400; }
+#tcfv.radar-mode .tcfv-btn { background: #001200; color: #00cc33; border-color: #004400; }
+#tcfv.radar-mode .tcfv-btn:hover { background: #002800; }
+#tcfv.radar-mode hr { border-top-color: #003300; }
+#tcfv.radar-mode .note { color: #005522 !important; }
+#tcfv.radar-mode .big-t { color: #00ff44 !important; }
+#tcfv.radar-mode .ver-t { color: #006622 !important; }
+#tcfv.radar-mode #tcfv-author { color: #00ff44; }
+#tcfv.radar-mode #tcfv-author:hover { color: #88ffaa; }
+`);
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     INIT
+  ───────────────────────────────────────────────────────────── */
+
+  function init() {
+    loadS();
+    injectCSS();
+    buildHUD();
+
+    // Replay saved log (no duplicates — just reprint what was already there)
+    renderLog();
+
+    hookClicks();
+    hookNetwork();
+    watchDOM();
+
+    // Restore in-flight or preview state from previous session
+    if (S.flying && S.dst) {
+      if (Date.now() >= S.arrTime) {
+        // Landed while page was closed
+        S.flying = false; S.src = S.dst; S.dst = null;
+        S.phasesTriggered = {}; saveS();
+      } else {
+        drawPath(S.src, S.dst);
+        if (el.svg) el.svg.setAttribute('viewBox', getZoomedViewBox(S.src, S.dst));
+        highlightDots(S.src, S.dst);
+      }
+    } else if (S.previewDst) {
+      drawPath(S.src, S.previewDst);
+      if (el.svg) el.svg.setAttribute('viewBox', getZoomedViewBox(S.src, S.previewDst));
+      highlightDots(S.src, S.previewDst);
+    }
+
+    showPg(S.page || 'main');
+    startLoop();
+    initFromApi();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => setTimeout(init, 700));
+  } else {
+    setTimeout(init, 700);
+  }
 
 })();
