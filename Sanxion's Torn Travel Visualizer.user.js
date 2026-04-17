@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      9.0.0
+// @version      10.0.0
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/page.php?sid=travel*
@@ -159,7 +159,7 @@
     ticket:'standard', player:'Pilot', flying:false, isReturn:false,
     prevPhase:'', phasesTriggered:{}, turbTriggered:false, halfwayFired:false,
     log:[], px:20, py:60, pw:680, ph_panel:520, min:false, page:'main', apiKey:'',
-    previewDst:null, inflightSchedule:null,
+    previewDst:null, inflightSchedule:null, planeScale:100,
   };
 
   const saveS = () => {
@@ -169,7 +169,7 @@
         ticket:S.ticket, player:S.player, flying:S.flying, isReturn:S.isReturn,
         prevPhase:S.prevPhase, phasesTriggered:S.phasesTriggered, turbTriggered:S.turbTriggered, halfwayFired:S.halfwayFired,
         log:S.log.slice(-30), px:S.px, py:S.py, pw:S.pw, ph_panel:S.ph_panel,
-        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule,
+        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale,
       }));
     } catch(e) {}
   };
@@ -181,6 +181,7 @@
       if (!S.phasesTriggered) S.phasesTriggered = {};
       if (!S.inflightSchedule) S.inflightSchedule = null;
       if (S.halfwayFired === undefined) S.halfwayFired = false;
+      if (!S.planeScale) S.planeScale = 100;
     } catch(e) {}
   };
 
@@ -476,6 +477,7 @@ ${dots}
     const t = Math.max(0.001, Math.min(0.999, progress));
     const pos = bPt(t, s, c, d), ang = bAng(t, s, c, d);
     const plane = TICKETS[S.ticket]?.plane || 'jumbo';
+    const scale = (S.planeScale || 100) / 100;
 
     // Top-down airplane silhouette — white fill, black stroke, transparent background
     // Sized to be smaller than the destination dots (dot-core r=3.5, dot-ring r=5.5)
@@ -501,7 +503,11 @@ ${dots}
   <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="black" stroke-width="1.2" stroke-linecap="round"/>`;
     }
 
-    g.innerHTML = `<g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${ang.toFixed(1)})">
+    // Rotation: bAng gives tangent angle where 0°=right, 90°=down (SVG convention).
+    // The plane nose points up (-y = -90°). Adding 90° corrects this so nose aligns with travel direction.
+    const rotAngle = ang + 90;
+
+    g.innerHTML = `<g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${rotAngle.toFixed(1)}) scale(${scale})">
   <g filter="url(#gl)">${svgShape}
   </g>
 </g>`;
@@ -813,6 +819,7 @@ ${dots}
   <div id="tcfv-hbtns">
     <button class="thb ta" id="thb-main" title="Flight view">&#9992;</button>
     <button class="thb" id="thb-set" title="Settings">&#9881;</button>
+    <button class="thb" id="thb-more" title="More Settings">&#9965;</button>
     <button class="thb" id="thb-cred" title="Credits">&#9733;</button>
     <button class="thb" id="thb-radar" title="Toggle Radar / Normal mode">&#9685;</button>
     <button class="thb" id="thb-min" title="Minimise">&#8212;</button>
@@ -859,12 +866,35 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 9.0.0</p>
+    <p class="ver-t">Version 10.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
     <p class="note">Built for the Torn City community. Not affiliated with Torn Ltd.<br>
     Flight timings, altimeter, airspeed, fuel loads and ATC commentary are approximations for entertainment purposes only.</p>
+  </div>
+
+  <div id="tcfv-more" class="tcfv-pg" style="display:none">
+    <h3>&#9965; More Settings</h3>
+    <p>Adjust the size of the airplane image on the flight map.</p>
+    <div id="tcfv-scale-wrap">
+      <div class="scale-row">
+        <label for="tcfv-scale-slider">Plane Size</label>
+        <span id="tcfv-scale-val">100%</span>
+      </div>
+      <input id="tcfv-scale-slider" type="range" min="10" max="150" value="100" step="5">
+      <div id="tcfv-plane-preview-wrap">
+        <svg id="tcfv-plane-preview" viewBox="-20 -20 40 40" xmlns="http://www.w3.org/2000/svg" width="80" height="80">
+          <rect width="40" height="40" x="-20" y="-20" fill="#06101c" rx="4"/>
+          <g id="tcfv-preview-plane" transform="scale(1)">
+            <ellipse cx="0" cy="0" rx="1.5" ry="4.5" fill="white" stroke="black" stroke-width="0.8"/>
+            <polygon points="0,-2 -6.5,1 -5.5,2 0,-0.5 5.5,2 6.5,1" fill="white" stroke="black" stroke-width="0.7"/>
+            <polygon points="0,2.5 -2.5,4.5 -2,5 0,3.5 2,5 2.5,4.5" fill="white" stroke="black" stroke-width="0.6"/>
+          </g>
+        </svg>
+        <p class="note" style="margin-top:6px">Preview updates in real time. Actual plane on map rotates with flight direction.</p>
+      </div>
+    </div>
   </div>
 
 </div>
@@ -887,6 +917,7 @@ ${dots}
       pgMain: panel.querySelector('#tcfv-main'),
       pgSet: panel.querySelector('#tcfv-set'),
       pgCred: panel.querySelector('#tcfv-cred'),
+      pgMore: panel.querySelector('#tcfv-more'),
       svg: panel.querySelector('#tcfv-svg'),
     };
 
@@ -900,6 +931,7 @@ ${dots}
     panel.querySelector('#thb-radar').addEventListener('click', doRadar);
     panel.querySelector('#thb-main').addEventListener('click', () => showPg('main'));
     panel.querySelector('#thb-set').addEventListener('click', () => showPg('set'));
+    panel.querySelector('#thb-more').addEventListener('click', () => showPg('more'));
     panel.querySelector('#thb-cred').addEventListener('click', () => showPg('cred'));
 
     const apiInp = panel.querySelector('#tcfv-api-inp');
@@ -913,7 +945,21 @@ ${dots}
       testApiKey(apiInp.value.trim(), panel.querySelector('#tcfv-api-msg'))
     );
 
-    if (S.min) doMin(true);
+    // Plane size slider
+    const slider = panel.querySelector('#tcfv-scale-slider');
+    const scaleVal = panel.querySelector('#tcfv-scale-val');
+    const previewPlane = panel.querySelector('#tcfv-preview-plane');
+    slider.value = S.planeScale || 100;
+    scaleVal.textContent = `${slider.value}%`;
+    slider.addEventListener('input', () => {
+      S.planeScale = parseInt(slider.value, 10);
+      scaleVal.textContent = `${S.planeScale}%`;
+      const sc = S.planeScale / 100;
+      if (previewPlane) previewPlane.setAttribute('transform', `scale(${sc})`);
+      saveS();
+    });
+    // Set initial preview scale
+    if (previewPlane) previewPlane.setAttribute('transform', `scale(${(S.planeScale || 100) / 100})`);
     // Restore radar mode
     try { if (GM_getValue('tcfv_radar', false)) doRadar(); } catch(e) {}
     showPg(S.page || 'main');
@@ -924,8 +970,9 @@ ${dots}
     el.pgMain.style.display = pg === 'main' ? 'flex' : 'none';
     el.pgSet.style.display = pg === 'set' ? 'block' : 'none';
     el.pgCred.style.display = pg === 'cred' ? 'block' : 'none';
+    el.pgMore.style.display = pg === 'more' ? 'block' : 'none';
     document.querySelectorAll('.thb').forEach(b => b.classList.remove('ta'));
-    const map = { main:'#thb-main', set:'#thb-set', cred:'#thb-cred' };
+    const map = { main:'#thb-main', set:'#thb-set', cred:'#thb-cred', more:'#thb-more' };
     document.querySelector(map[pg])?.classList.add('ta');
     saveS();
   }
@@ -1393,7 +1440,23 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
 }
 #tcfv-resize-handle:hover { opacity: 1; }
 
-/* ── RADAR / CRT MODE ── */
+/* ── MORE SETTINGS ── */
+#tcfv-more { padding: 14px 16px; overflow-y: auto; height: 100%; box-sizing: border-box; }
+#tcfv-more h3 { color: #5ab0e8; font-size: 11px; margin: 0 0 12px; border-bottom: 1px solid #1e3d5c; padding-bottom: 6px; letter-spacing: 2px; text-transform: uppercase; }
+#tcfv-more p { margin: 8px 0; color: #8ab8d8; font-size: 11px; line-height: 1.65; }
+#tcfv-scale-wrap { margin-top: 10px; }
+.scale-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+.scale-row label { color: #4a7a9a; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
+#tcfv-scale-val { color: #6abcee; font-size: 13px; font-weight: bold; }
+#tcfv-scale-slider { width: 100%; accent-color: #4488ff; cursor: pointer; margin-bottom: 14px; }
+#tcfv-plane-preview-wrap { display: flex; flex-direction: column; align-items: center; margin-top: 6px; }
+#tcfv-plane-preview { border: 1px solid #1e3d5c; border-radius: 6px; }
+#tcfv.radar-mode #tcfv-more h3 { color: #00ff44 !important; border-bottom-color: #004400 !important; }
+#tcfv.radar-mode #tcfv-more p { color: #00aa33; }
+#tcfv.radar-mode #tcfv-scale-val { color: #00ff44; }
+#tcfv.radar-mode #tcfv-scale-slider { accent-color: #00ff44; }
+#tcfv.radar-mode #tcfv-plane-preview { border-color: #004400; background: #000800; }
+#tcfv.radar-mode .scale-row label { color: #006622; }
 #tcfv.radar-mode {
   background: #000a00;
   border-color: #00ff44;
