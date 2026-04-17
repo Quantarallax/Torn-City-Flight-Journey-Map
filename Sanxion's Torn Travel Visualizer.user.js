@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      7.0.0
+// @version      8.0.0
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/page.php?sid=travel*
 // @updateURL    https://github.com/Quantarallax/Torn-City-Flight-Journey-Map/raw/refs/heads/main/Sanxion's%20Torn%20Travel%20Visualizer.user.js
 // @downloadURL  https://github.com/Quantarallax/Torn-City-Flight-Journey-Map/raw/refs/heads/main/Sanxion's%20Torn%20Travel%20Visualizer.user.js
 // @connect      api.torn.com
+// @connect      statcounter.com
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle
@@ -29,7 +30,7 @@
     torn: { label:'Torn City', country:'USA', city:'Torn City', lat:40.71, lon:-74.01, col:'#ff4444' },
     mexico: { label:'Mexico', country:'Mexico', city:'Ciudad Juarez', lat:31.73, lon:-106.49, col:'#ff8800' },
     caymans: { label:'Cayman Islands', country:'Cayman Islands', city:'George Town', lat:19.30, lon:-81.37, col:'#ffcc00' },
-    canada: { label:'Canada', country:'Canada', city:'Toronto', lat:43.65, lon:-79.38, col:'#ff44cc' },
+    canada: { label:'Canada', country:'Canada', city:'Toronto', lat:44.5, lon:-83.5, col:'#ff44cc' },
     hawaii: { label:'Hawaii', country:'USA', city:'Honolulu', lat:21.31, lon:-157.83, col:'#00ffcc' },
     uk: { label:'United Kingdom', country:'United Kingdom', city:'London', lat:51.51, lon:-0.13, col:'#4488ff' },
     argentina: { label:'Argentina', country:'Argentina', city:'Buenos Aires', lat:-34.61, lon:-58.38, col:'#44ffaa' },
@@ -132,11 +133,11 @@
       p => `${p.name} checks their weapons for plane disembarkation.`,
     ],
     landing: [
-      () => '*Screech of tyres on tarmac.*',
       () => 'Slight turbulence, but not too bad.',
       () => 'Yes, weapons look good and oiled.',
     ],
     arrived: [
+      () => '*Screech of tyres on tarmac.*',
       p => `Arrival confirmed at ${p.dst}.`,
       p => p.isTornCity
         ? 'Welcome to Torn City, please enjoy your stay, however long it will be. Stay safe. Thank you.'
@@ -156,7 +157,7 @@
   let S = {
     src:'torn', dst:null, depTime:null, arrTime:null,
     ticket:'standard', player:'Pilot', flying:false, isReturn:false,
-    prevPhase:'', phasesTriggered:{}, turbTriggered:false,
+    prevPhase:'', phasesTriggered:{}, turbTriggered:false, halfwayFired:false,
     log:[], px:20, py:60, pw:680, ph_panel:520, min:false, page:'main', apiKey:'',
     previewDst:null, inflightSchedule:null,
   };
@@ -166,7 +167,7 @@
       GM_setValue('tcfv_v3', JSON.stringify({
         src:S.src, dst:S.dst, depTime:S.depTime, arrTime:S.arrTime,
         ticket:S.ticket, player:S.player, flying:S.flying, isReturn:S.isReturn,
-        prevPhase:S.prevPhase, phasesTriggered:S.phasesTriggered, turbTriggered:S.turbTriggered,
+        prevPhase:S.prevPhase, phasesTriggered:S.phasesTriggered, turbTriggered:S.turbTriggered, halfwayFired:S.halfwayFired,
         log:S.log.slice(-30), px:S.px, py:S.py, pw:S.pw, ph_panel:S.ph_panel,
         min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule,
       }));
@@ -179,6 +180,7 @@
       if (r) Object.assign(S, JSON.parse(r));
       if (!S.phasesTriggered) S.phasesTriggered = {};
       if (!S.inflightSchedule) S.inflightSchedule = null;
+      if (S.halfwayFired === undefined) S.halfwayFired = false;
     } catch(e) {}
   };
 
@@ -268,7 +270,16 @@
     if (!sk || !dk) return `0 0 ${MAP_W} ${MAP_H}`;
     const s = toXY(DESTS[sk].lon, DESTS[sk].lat);
     const d = toXY(DESTS[dk].lon, DESTS[dk].lat);
-    const pad = 90;
+
+    // Scale padding to route length so short routes zoom in closer
+    const routeW = Math.abs(d.x - s.x);
+    const routeH = Math.abs(d.y - s.y);
+    const routeSpan = Math.sqrt(routeW * routeW + routeH * routeH);
+    // Minimum span of 120px so very close routes still zoom in tightly
+    const minSpan = 120;
+    const effectiveSpan = Math.max(routeSpan, minSpan);
+    const pad = Math.max(40, effectiveSpan * 0.35);
+
     let minX = Math.min(s.x, d.x) - pad;
     let maxX = Math.max(s.x, d.x) + pad;
     let minY = Math.min(s.y, d.y) - pad;
@@ -278,14 +289,21 @@
     minY = Math.max(0, minY);
     maxX = Math.min(MAP_W, maxX);
     maxY = Math.min(MAP_H, maxY);
-    // Maintain 2:1 aspect ratio of the svg viewport
+    // Enforce minimum viewbox so dots are readable
+    const MIN_VW = 160;
+    if (maxX - minX < MIN_VW) {
+      const cx = (minX + maxX) / 2;
+      minX = Math.max(0, cx - MIN_VW / 2);
+      maxX = Math.min(MAP_W, cx + MIN_VW / 2);
+    }
+    // Maintain 2:1 aspect ratio
     const vw = maxX - minX, vh = maxY - minY;
     if (vw / vh < 2) {
       const extra = (vh * 2 - vw) / 2;
       minX = Math.max(0, minX - extra);
       maxX = Math.min(MAP_W, maxX + extra);
     }
-    return `${minX.toFixed(0)} ${minY.toFixed(0)} ${(maxX-minX).toFixed(0)} ${(maxY-minY).toFixed(0)}`;
+    return `${minX.toFixed(0)} ${minY.toFixed(0)} ${(maxX - minX).toFixed(0)} ${(maxY - minY).toFixed(0)}`;
   }
 
   /* ─────────────────────────────────────────────────────────────
@@ -459,25 +477,27 @@ ${dots}
     const pos = bPt(t, s, c, d), ang = bAng(t, s, c, d);
     const plane = TICKETS[S.ticket]?.plane || 'jumbo';
 
-    // White triangle on black circle — clean, visible against the map
-    // Different sizes and proportions per plane type
+    // Top-down airplane silhouette — white fill, black stroke, transparent background
     let svgShape;
     if (plane === 'jumbo') {
-      // Large black circle, wide white triangle (jumbo spread)
+      // Wide-body top-down: broad fuselage, swept wings, horizontal stabiliser
       svgShape = `
-  <circle r="10" fill="black" opacity="0.88"/>
-  <polygon points="0,-7 -5.5,5 5.5,5" fill="white"/>`;
+  <ellipse cx="0" cy="0" rx="3" ry="9" fill="white" stroke="black" stroke-width="1.1"/>
+  <polygon points="0,-4 -13,2 -11,4 0,-1 11,4 13,2" fill="white" stroke="black" stroke-width="0.9"/>
+  <polygon points="0,5 -5,9 -4,10 0,7 4,10 5,9" fill="white" stroke="black" stroke-width="0.8"/>`;
     } else if (plane === 'private_plane') {
-      // Medium black circle, slim white triangle (private jet)
+      // Slim private jet: narrow fuselage, swept wings, delta tail
       svgShape = `
-  <circle r="8" fill="black" opacity="0.88"/>
-  <polygon points="0,-7 -3.5,5 3.5,5" fill="white"/>`;
+  <ellipse cx="0" cy="0" rx="2" ry="8" fill="white" stroke="black" stroke-width="1.1"/>
+  <polygon points="0,-3 -10,3 -9,5 0,1 9,5 10,3" fill="white" stroke="black" stroke-width="0.9"/>
+  <polygon points="0,5 -4,8 -3,9 0,6.5 3,9 4,8" fill="white" stroke="black" stroke-width="0.8"/>`;
     } else {
-      // Small black circle, small blunt white triangle + prop tick (airstrip)
+      // Single-prop: straight wings, prop crossbar at nose
       svgShape = `
-  <circle r="7" fill="black" opacity="0.88"/>
-  <polygon points="0,-5.5 -4,4 4,4" fill="white"/>
-  <line x1="-4" y1="-5.5" x2="4" y2="-5.5" stroke="white" stroke-width="1.5" stroke-linecap="round"/>`;
+  <ellipse cx="0" cy="1" rx="2" ry="7" fill="white" stroke="black" stroke-width="1.1"/>
+  <polygon points="-9,-1 -8,1 8,1 9,-1" fill="white" stroke="black" stroke-width="0.9"/>
+  <polygon points="0,5 -3,8 -2,9 0,6.5 2,9 3,8" fill="white" stroke="black" stroke-width="0.8"/>
+  <line x1="-3" y1="-8" x2="3" y2="-8" stroke="black" stroke-width="2" stroke-linecap="round"/>`;
     }
 
     g.innerHTML = `<g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${ang.toFixed(1)})">
@@ -747,7 +767,17 @@ ${dots}
       if (scheduleChanged) saveS();
     }
 
-    // Random turbulence during inflight or start of descent — fires once per flight
+    // Halfway message — fires once at 50% progress during inflight
+    if (!S.halfwayFired && progress >= 0.5 && phase === 'inflight') {
+      S.halfwayFired = true;
+      const minsLeft = Math.round(timeLeft / 60000);
+      addLog('Ladies and gentlemen, we are now halfway.');
+      setTimeout(() => {
+        addLog(`We are expected to land at ${arrivalTime}, which is in about ${minsLeft} minutes time.`);
+        saveS();
+      }, 2000);
+      saveS();
+    }
     if (!S.turbTriggered && (phase === 'inflight' || phase === 'descent') && Math.random() < 0.003) {
       S.turbTriggered = true;
       triggerComm('turbulence', params);
@@ -828,7 +858,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 7.0.0</p>
+    <p class="ver-t">Version 8.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1071,6 +1101,16 @@ ${dots}
           }
         }
 
+        // Return home / fly back button detection
+        if ((txt.includes('return') && (txt.includes('home') || txt.includes('torn') || txt.includes('back'))) ||
+          txt === 'fly home' || txt === 'return home' || txt === 'go home' ||
+          cls.includes('return') || cls.includes('fly-home') || id.includes('return') || id.includes('home')) {
+          if (S.src !== 'torn' && !S.flying) {
+            startFlight('torn', S.ticket, true);
+            return;
+          }
+        }
+
         // Fly button
         if (txt === 'fly' || txt === 'fly now' || txt === 'fly!' || txt === 'take off' ||
           cls.includes('fly-btn') || cls.includes('flybtn') || id.includes('fly') || id.includes('takeoff')) {
@@ -1177,7 +1217,7 @@ ${dots}
     S.src = sk; S.dst = dk; S.ticket = tk;
     S.depTime = dep; S.arrTime = arr;
     S.flying = true; S.isReturn = isReturn;
-    S.prevPhase = ''; S.phasesTriggered = {}; S.turbTriggered = false;
+    S.prevPhase = ''; S.phasesTriggered = {}; S.turbTriggered = false; S.halfwayFired = false;
     turbFired = false;
     S.inflightSchedule = null;
     S.log = [];
@@ -1401,8 +1441,24 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
      INIT
   ───────────────────────────────────────────────────────────── */
 
+  function injectStatcounter() {
+    // Statcounter usage analytics for TC Flight Visualiser
+    // https://www.torn.com/page.php?sid=travel
+    try {
+      window.sc_project = 13031782;
+      window.sc_invisible = 1;
+      window.sc_security = 'af9e448b';
+      const sc = document.createElement('script');
+      sc.type = 'text/javascript';
+      sc.async = true;
+      sc.src = 'https://www.statcounter.com/counter/counter.js';
+      document.head.appendChild(sc);
+    } catch(e) {}
+  }
+
   function init() {
     loadS();
+    injectStatcounter();
     injectCSS();
     buildHUD();
 
