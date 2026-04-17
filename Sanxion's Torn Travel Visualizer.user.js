@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      8.0.0
+// @version      9.0.0
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/page.php?sid=travel*
@@ -478,26 +478,27 @@ ${dots}
     const plane = TICKETS[S.ticket]?.plane || 'jumbo';
 
     // Top-down airplane silhouette — white fill, black stroke, transparent background
+    // Sized to be smaller than the destination dots (dot-core r=3.5, dot-ring r=5.5)
     let svgShape;
     if (plane === 'jumbo') {
       // Wide-body top-down: broad fuselage, swept wings, horizontal stabiliser
       svgShape = `
-  <ellipse cx="0" cy="0" rx="3" ry="9" fill="white" stroke="black" stroke-width="1.1"/>
-  <polygon points="0,-4 -13,2 -11,4 0,-1 11,4 13,2" fill="white" stroke="black" stroke-width="0.9"/>
-  <polygon points="0,5 -5,9 -4,10 0,7 4,10 5,9" fill="white" stroke="black" stroke-width="0.8"/>`;
+  <ellipse cx="0" cy="0" rx="1.5" ry="4.5" fill="white" stroke="black" stroke-width="0.8"/>
+  <polygon points="0,-2 -6.5,1 -5.5,2 0,-0.5 5.5,2 6.5,1" fill="white" stroke="black" stroke-width="0.7"/>
+  <polygon points="0,2.5 -2.5,4.5 -2,5 0,3.5 2,5 2.5,4.5" fill="white" stroke="black" stroke-width="0.6"/>`;
     } else if (plane === 'private_plane') {
       // Slim private jet: narrow fuselage, swept wings, delta tail
       svgShape = `
-  <ellipse cx="0" cy="0" rx="2" ry="8" fill="white" stroke="black" stroke-width="1.1"/>
-  <polygon points="0,-3 -10,3 -9,5 0,1 9,5 10,3" fill="white" stroke="black" stroke-width="0.9"/>
-  <polygon points="0,5 -4,8 -3,9 0,6.5 3,9 4,8" fill="white" stroke="black" stroke-width="0.8"/>`;
+  <ellipse cx="0" cy="0" rx="1" ry="4" fill="white" stroke="black" stroke-width="0.8"/>
+  <polygon points="0,-1.5 -5,1.5 -4.5,2.5 0,0.5 4.5,2.5 5,1.5" fill="white" stroke="black" stroke-width="0.7"/>
+  <polygon points="0,2.5 -2,4 -1.5,4.5 0,3.25 1.5,4.5 2,4" fill="white" stroke="black" stroke-width="0.6"/>`;
     } else {
       // Single-prop: straight wings, prop crossbar at nose
       svgShape = `
-  <ellipse cx="0" cy="1" rx="2" ry="7" fill="white" stroke="black" stroke-width="1.1"/>
-  <polygon points="-9,-1 -8,1 8,1 9,-1" fill="white" stroke="black" stroke-width="0.9"/>
-  <polygon points="0,5 -3,8 -2,9 0,6.5 2,9 3,8" fill="white" stroke="black" stroke-width="0.8"/>
-  <line x1="-3" y1="-8" x2="3" y2="-8" stroke="black" stroke-width="2" stroke-linecap="round"/>`;
+  <ellipse cx="0" cy="0.5" rx="1" ry="3.5" fill="white" stroke="black" stroke-width="0.8"/>
+  <polygon points="-4.5,-0.5 -4,0.5 4,0.5 4.5,-0.5" fill="white" stroke="black" stroke-width="0.7"/>
+  <polygon points="0,2.5 -1.5,4 -1,4.5 0,3.25 1,4.5 1.5,4" fill="white" stroke="black" stroke-width="0.6"/>
+  <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="black" stroke-width="1.2" stroke-linecap="round"/>`;
     }
 
     g.innerHTML = `<g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${ang.toFixed(1)})">
@@ -858,7 +859,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 8.0.0</p>
+    <p class="ver-t">Version 9.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
