@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      12.0.0
+// @version      13.0.0
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/page.php?sid=travel*
@@ -915,7 +915,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 12.0.0</p>
+    <p class="ver-t">Version 13.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1555,18 +1555,33 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
   ───────────────────────────────────────────────────────────── */
 
   function injectStatcounter() {
-    // Ping the Statcounter invisible pixel via GM_xmlhttpRequest.
-    // @connect c.statcounter.com is required — statcounter.com alone does NOT cover subdomains.
-    GM_xmlhttpRequest({
-      method: 'GET',
-      url: 'https://c.statcounter.com/13031782/0/af9e448b/1/',
-      headers: {
-        'Referer': 'https://www.torn.com/page.php?sid=travel',
-        'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
-      },
-      onload: r => console.log('[TCFV] Statcounter pinged OK — status', r.status),
-      onerror: e => console.warn('[TCFV] Statcounter ping failed', e),
-    });
+    // Statcounter requires more than a bare pixel GET to register a visit.
+    // counter.js sends a query string with: session ID, page URL, referrer, screen res, domain.
+    // We replicate that here so the server records it as a full page view.
+    try {
+      const sid = Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
+      const res = screen.width + 'x' + screen.height;
+      const pageUrl = encodeURIComponent('https://www.torn.com/page.php?sid=travel');
+      const ref = encodeURIComponent(document.referrer || '');
+      const trackUrl = 'https://c.statcounter.com/13031782/0/af9e448b/1/'
+        + '?vn=5'
+        + '&sc_sid=' + sid
+        + '&sc_d=www.torn.com'
+        + '&sc_p=' + pageUrl
+        + '&sc_ref=' + ref
+        + '&sc_res=' + res
+        + '&sc_it=TC+Flight+Visualiser';
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: trackUrl,
+        headers: {
+          'Referer': 'https://www.torn.com/page.php?sid=travel',
+          'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+        },
+        onload: r => console.log('[TCFV] Statcounter tracked — status', r.status),
+        onerror: e => console.warn('[TCFV] Statcounter error', e),
+      });
+    } catch(e) { console.warn('[TCFV] Statcounter init error', e); }
   }
 
   function init() {
