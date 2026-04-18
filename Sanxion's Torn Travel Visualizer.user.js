@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      10.0.0
+// @version      11.0.0
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/page.php?sid=travel*
@@ -60,10 +60,10 @@
   ───────────────────────────────────────────────────────────── */
 
   const TICKETS = {
-    standard: { label:'Standard', plane:'jumbo', mult:1.00, fuel:42000, speed:545, maxAlt:32000, col:'#aaaaaa' },
-    business: { label:'Business Class', plane:'jumbo', mult:1.15, fuel:47000, speed:575, maxAlt:32000, col:'#4488ff' },
-    private: { label:'Private Plane', plane:'private_plane', mult:1.80, fuel:18000, speed:480, maxAlt:32000, col:'#ff6644' },
-    airstrip: { label:'Airstrip', plane:'prop_plane', mult:1.60, fuel:6000, speed:180, maxAlt:12000, col:'#88ff44' },
+    standard: { label:'Standard', plane:'jumbo', size:'large', mult:1.00, fuel:42000, speed:545, maxAlt:32000, col:'#aaaaaa' },
+    business: { label:'Business Class', plane:'jumbo', size:'large', mult:1.15, fuel:47000, speed:575, maxAlt:32000, col:'#4488ff' },
+    private: { label:'Private Plane', plane:'private_plane', size:'small', mult:1.80, fuel:18000, speed:480, maxAlt:32000, col:'#ff6644' },
+    airstrip: { label:'Airstrip', plane:'prop_plane', size:'small', mult:1.60, fuel:6000, speed:180, maxAlt:12000, col:'#88ff44' },
   };
 
   /* ─────────────────────────────────────────────────────────────
@@ -87,17 +87,23 @@
      No duplicates — each phase fires exactly once per flight.
   ───────────────────────────────────────────────────────────── */
 
-  // Fixed inflight messages — always shown (in order at start/end of inflight)
-  const INFLIGHT_FIXED_START = [
+  // ── INFLIGHT POOLS — split by plane size ──────────────────────
+  // Fixed messages always shown at start of inflight phase
+  const INFLIGHT_FIXED_START_LARGE = [
     p => `Levelling off at ${p.maxAlt.toLocaleString()} feet. Weather good. All clear.`,
     () => 'Seat belt sign has been turned off.',
   ];
+  const INFLIGHT_FIXED_START_SMALL = [
+    p => `Levelling off at ${p.maxAlt.toLocaleString()} feet. Weather good. All clear.`,
+    () => 'A jet flies past, upside down.',
+  ];
+  // Fixed messages always shown at end of inflight phase
   const INFLIGHT_FIXED_END = [
     p => `Cruising at ${p.speed} mph. Estimated arrival: ${p.eta}.`,
     p => `Arrival time about ${p.arrivalTime}.`,
   ];
-  // Random pool — a subset is picked each flight and spread across the inflight period
-  const INFLIGHT_RANDOM = [
+  // Random pool for large planes — subset picked each flight
+  const INFLIGHT_RANDOM_LARGE = [
     () => 'A baby starts crying across the aisle.',
     () => 'Chedburn flies past.',
     p => `${p.name}'s seat gets constantly kicked from behind by a small child.`,
@@ -109,14 +115,36 @@
     () => 'ATC stand by, unsure of error reason.',
     () => 'A jet flies past, upside down.',
   ];
+  // Random pool for small planes — subset picked each flight
+  const INFLIGHT_RANDOM_SMALL = [
+    () => 'Up here, the sun shines brightly.',
+    () => 'The engine hums steadily.',
+    () => 'WARNING: Flight proximity alert!',
+    () => 'ATC stand by, unsure of error reason.',
+    p => `${p.name} glances down at the patchwork of fields below.`,
+  ];
+
+  // Helper — returns the right commentary array based on plane size
+  const isSmallPlane = () => TICKETS[S.ticket]?.size === 'small';
 
   const COMMENTARY = {
-    ready: [
-      p => `${p.name} requesting clearance for take-off from ${p.src} Airport.`,
-      p => `Preflight checks confirmed. Welcome aboard, ${p.name}.`,
-      p => `Destination: ${p.dst}. Estimated flight time: ${p.eta}.`,
+    ready_large: [
+      () => 'Tower, pre-flight checks complete.',
+      p => `Flight requesting clearance for take-off from ${p.src} Airport.`,
+      () => 'Ladies and gentlemen, we are ready for take off.',
     ],
-    takeoff: [
+    ready_small: [
+      p => `${p.name} requesting clearance for take-off from ${p.src} Airport.`,
+      p => `Preflight checks confirmed. ${p.name}.`,
+    ],
+    takeoff_large: [
+      () => 'Cabin crew, cross-check ready for departure.',
+      () => 'The airplane picks up speed.',
+      () => 'The airplane leaves the ground.',
+      () => 'Sit back and relax.',
+      p => `Climbing to ${p.maxAlt.toLocaleString()} feet.`,
+    ],
+    takeoff_small: [
       p => `ATC: ${p.name}, you are cleared for take-off. Runway 1C. Proceed.`,
       () => 'Increasing speed, throttle engaged.',
       p => `Climbing to ${p.maxAlt.toLocaleString()} feet.`,
@@ -124,13 +152,20 @@
     turbulence: [
       () => 'Slight turbulence — nothing to worry about.',
     ],
-    descent: [
+    descent_large: [
       () => 'Cabin crew, prepare for descent.',
       () => 'Miss Mile High Club pops her head up from behind a seat near the front.',
       () => 'Someone honks up their in-flight meal.',
       () => 'Ladies and gentlemen, please fasten your seat belts.',
       p => `Weather in ${p.dst} is ${rndW()}. Have a nice day.`,
-      p => `${p.name} checks their weapons for plane disembarkation.`,
+      p => `${p.name} checks their weapons ready for plane disembarkation.`,
+    ],
+    descent_small: [
+      p => `${p.name} flicks a few switches, initiating descent.`,
+      p => `${p.name} requesting clearance into ${p.dst}.`,
+      () => 'ATC: Confirmed, follow pre-planned flight path.',
+      p => `Weather in ${p.dst} is ${rndW()}. Have a nice day.`,
+      p => `${p.name} checks their weapons ready for plane disembarkation.`,
     ],
     landing: [
       () => 'Slight turbulence, but not too bad.',
@@ -149,6 +184,12 @@
       () => 'Wheels up. Heading home.',
     ],
   };
+
+  // Get commentary for size-dependent phases
+  function getComm(phase, small) {
+    const key = `${phase}_${small ? 'small' : 'large'}`;
+    return COMMENTARY[key] || COMMENTARY[phase] || [];
+  }
 
   /* ─────────────────────────────────────────────────────────────
      STATE  — persisted via GM_setValue
@@ -609,8 +650,8 @@ ${dots}
     if (S.phasesTriggered[phase]) return; // already fired this phase this flight
     S.phasesTriggered[phase] = true;
     saveS();
-    const msgs = COMMENTARY[phase];
-    if (!msgs) return;
+    const msgs = getComm(phase, params.isSmall);
+    if (!msgs || !msgs.length) return;
     const rid = (phRunId[phase] = (phRunId[phase] || 0) + 1);
     msgs.forEach((fn, i) => {
       setTimeout(() => {
@@ -636,9 +677,12 @@ ${dots}
     const inflightStart = S.depTime + total * 0.05;
     const inflightEnd = S.depTime + total * 0.75;
     const duration = inflightEnd - inflightStart;
+    const small = TICKETS[S.ticket]?.size === 'small';
+    const fixedStart = small ? INFLIGHT_FIXED_START_SMALL : INFLIGHT_FIXED_START_LARGE;
+    const randomPool = small ? INFLIGHT_RANDOM_SMALL : INFLIGHT_RANDOM_LARGE;
 
     // Pick 3–5 random messages from the pool (never more than pool size)
-    const poolSize = INFLIGHT_RANDOM.length;
+    const poolSize = randomPool.length;
     const pickCount = Math.min(poolSize, 3 + Math.floor(Math.random() * 3));
     const indices = Array.from({ length: poolSize }, (_, i) => i);
     for (let i = indices.length - 1; i > 0; i--) {
@@ -649,7 +693,7 @@ ${dots}
 
     // Build schedule — fixed-start messages at beginning, random in middle, fixed-end near end
     const schedule = [];
-    const fixedStartCount = INFLIGHT_FIXED_START.length;
+    const fixedStartCount = fixedStart.length;
     const fixedEndCount = INFLIGHT_FIXED_END.length;
     const totalSlots = fixedStartCount + pickCount + fixedEndCount;
     const slotSize = duration / (totalSlots + 1);
@@ -710,6 +754,7 @@ ${dots}
       maxAlt: TICKETS[S.ticket]?.maxAlt || 32000,
       arrivalTime,
       isTornCity: S.dst === 'torn',
+      isSmall: TICKETS[S.ticket]?.size === 'small',
     };
 
     // Phase transition commentary (fires only once per phase)
@@ -759,15 +804,18 @@ ${dots}
 
     // Fire scheduled inflight messages
     if (phase === 'inflight' && S.inflightSchedule) {
+      const small = TICKETS[S.ticket]?.size === 'small';
+      const fixedStart = small ? INFLIGHT_FIXED_START_SMALL : INFLIGHT_FIXED_START_LARGE;
+      const randomPool = small ? INFLIGHT_RANDOM_SMALL : INFLIGHT_RANDOM_LARGE;
       let scheduleChanged = false;
       for (const item of S.inflightSchedule) {
         if (!item.fired && now >= item.fireAt) {
           item.fired = true;
           scheduleChanged = true;
           let fn;
-          if (item.pool === 'fixed_start') fn = INFLIGHT_FIXED_START[item.idx];
+          if (item.pool === 'fixed_start') fn = fixedStart[item.idx];
           else if (item.pool === 'fixed_end') fn = INFLIGHT_FIXED_END[item.idx];
-          else fn = INFLIGHT_RANDOM[item.idx];
+          else fn = randomPool[item.idx];
           if (fn) addLog(fn(params));
         }
       }
@@ -866,7 +914,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 10.0.0</p>
+    <p class="ver-t">Version 11.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -882,7 +930,7 @@ ${dots}
         <label for="tcfv-scale-slider">Plane Size</label>
         <span id="tcfv-scale-val">100%</span>
       </div>
-      <input id="tcfv-scale-slider" type="range" min="10" max="150" value="100" step="5">
+      <input id="tcfv-scale-slider" type="range" min="10" max="300" value="100" step="5">
       <div id="tcfv-plane-preview-wrap">
         <svg id="tcfv-plane-preview" viewBox="-20 -20 40 40" xmlns="http://www.w3.org/2000/svg" width="80" height="80">
           <rect width="40" height="40" x="-20" y="-20" fill="#06101c" rx="4"/>
@@ -1506,18 +1554,15 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
   ───────────────────────────────────────────────────────────── */
 
   function injectStatcounter() {
-    // Statcounter usage analytics for TC Flight Visualiser
-    // https://www.torn.com/page.php?sid=travel
-    try {
-      window.sc_project = 13031782;
-      window.sc_invisible = 1;
-      window.sc_security = 'af9e448b';
-      const sc = document.createElement('script');
-      sc.type = 'text/javascript';
-      sc.async = true;
-      sc.src = 'https://www.statcounter.com/counter/counter.js';
-      document.head.appendChild(sc);
-    } catch(e) {}
+    // Ping the Statcounter invisible pixel via GM_xmlhttpRequest
+    // This is the correct method for Tampermonkey — script injection is blocked by CSP on Torn
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: 'https://c.statcounter.com/13031782/0/af9e448b/1/',
+      headers: { 'Referer': 'https://www.torn.com/page.php?sid=travel' },
+      onload: () => {},
+      onerror: () => {},
+    });
   }
 
   function init() {
