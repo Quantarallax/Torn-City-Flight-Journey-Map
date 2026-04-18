@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      19.0.0
+// @version      20.0.0
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/page.php?sid=travel*
@@ -199,7 +199,7 @@
     ticket:'standard', player:'Pilot', flying:false, isReturn:false,
     prevPhase:'', phasesTriggered:{}, turbTriggered:false, halfwayFired:false,
     log:[], px:20, py:60, pw:680, ph_panel:520, min:false, page:'main', apiKey:'',
-    previewDst:null, inflightSchedule:null, planeScale:100, inflightLogStart:null,
+    previewDst:null, inflightSchedule:null, planeScale:100, inflightLogStart:null, diagnostics:null,
   };
 
   const saveS = () => {
@@ -209,7 +209,7 @@
         ticket:S.ticket, player:S.player, flying:S.flying, isReturn:S.isReturn,
         prevPhase:S.prevPhase, phasesTriggered:S.phasesTriggered, turbTriggered:S.turbTriggered, halfwayFired:S.halfwayFired,
         log:S.log.slice(-30), px:S.px, py:S.py, pw:S.pw, ph_panel:S.ph_panel,
-        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale, inflightLogStart:S.inflightLogStart,
+        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale, inflightLogStart:S.inflightLogStart, diagnostics:S.diagnostics,
       }));
     } catch(e) {}
   };
@@ -881,9 +881,10 @@ ${dots}
 <div id="tcfv-hdr">
   <span id="tcfv-title">&#9992;&nbsp;TORN CITY FLIGHT VISUALISER</span>
   <div id="tcfv-hbtns">
-    <button class="thb ta" id="thb-main" title="Flight view">&#9992;</button>
-    <button class="thb" id="thb-set" title="Settings">&#9881;</button>
-    <button class="thb" id="thb-more" title="More Settings">&#9965;</button>
+    <button class="thb ta" id="thb-main" title="Flight View">&#9992;</button>
+    <button class="thb" id="thb-diag" title="Diagnostics">&#9874;</button>
+    <button class="thb" id="thb-set" title="API Settings">&#9881;</button>
+    <button class="thb" id="thb-more" title="Overlay">&#9965;</button>
     <button class="thb" id="thb-cred" title="Credits">&#9733;</button>
     <button class="thb" id="thb-radar" title="Toggle Radar / Normal mode">&#9685;</button>
     <button class="thb" id="thb-min" title="Minimise">&#8212;</button>
@@ -914,7 +915,7 @@ ${dots}
   </div>
 
   <div id="tcfv-set" class="tcfv-pg" style="display:none">
-    <h3>&#9881; Settings</h3>
+    <h3>&#9881; API Settings</h3>
     <p>An <strong>API key</strong> lets the visualiser read your live flight data directly from the Torn City servers, giving accurate real departure and arrival times.</p>
     <p>To get your API key: log in to Torn City &rarr; <strong>Preferences</strong> &rarr; <strong>API Keys</strong> tab &rarr; create a new key with at least <em>Public Access</em> enabled. It is a 16-character alphanumeric string.</p>
     <label for="tcfv-api-inp">API Key</label><br>
@@ -930,7 +931,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 19.0.0</p>
+    <p class="ver-t">Version 20.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -938,8 +939,12 @@ ${dots}
     Flight timings, altimeter, airspeed, fuel loads and ATC commentary are approximations for entertainment purposes only.</p>
   </div>
 
+  <div id="tcfv-diag" class="tcfv-pg" style="display:none">
+    <div id="tcfv-diag-inner"></div>
+  </div>
+
   <div id="tcfv-more" class="tcfv-pg" style="display:none">
-    <h3>&#9965; More Settings</h3>
+    <h3>&#9965; Overlay</h3>
     <p>Adjust the size of the airplane image on the flight map.</p>
     <div id="tcfv-scale-wrap">
       <div class="scale-row">
@@ -982,6 +987,7 @@ ${dots}
       pgSet: panel.querySelector('#tcfv-set'),
       pgCred: panel.querySelector('#tcfv-cred'),
       pgMore: panel.querySelector('#tcfv-more'),
+      pgDiag: panel.querySelector('#tcfv-diag'),
       svg: panel.querySelector('#tcfv-svg'),
     };
 
@@ -994,6 +1000,7 @@ ${dots}
     panel.querySelector('#thb-min').addEventListener('click', doMin);
     panel.querySelector('#thb-radar').addEventListener('click', doRadar);
     panel.querySelector('#thb-main').addEventListener('click', () => showPg('main'));
+    panel.querySelector('#thb-diag').addEventListener('click', () => showPg('diag'));
     panel.querySelector('#thb-set').addEventListener('click', () => showPg('set'));
     panel.querySelector('#thb-more').addEventListener('click', () => showPg('more'));
     panel.querySelector('#thb-cred').addEventListener('click', () => showPg('cred'));
@@ -1044,10 +1051,146 @@ ${dots}
     el.pgSet.style.display = pg === 'set' ? 'block' : 'none';
     el.pgCred.style.display = pg === 'cred' ? 'block' : 'none';
     el.pgMore.style.display = pg === 'more' ? 'block' : 'none';
+    el.pgDiag.style.display = pg === 'diag' ? 'flex' : 'none';
+    if (pg === 'diag') renderDiagPage();
     document.querySelectorAll('.thb').forEach(b => b.classList.remove('ta'));
-    const map = { main:'#thb-main', set:'#thb-set', cred:'#thb-cred', more:'#thb-more' };
+    const map = { main:'#thb-main', set:'#thb-set', cred:'#thb-cred', more:'#thb-more', diag:'#thb-diag' };
     document.querySelector(map[pg])?.classList.add('ta');
     saveS();
+  }
+
+  // ── DIAGNOSTICS ──────────────────────────────────────────────────────────
+
+  const DIAG_STATUS_COLS = { green:'#44ff88', yellow:'#ffcc44', red:'#ff4444' };
+
+  function generateDiagnostics() {
+    const isSmall = TICKETS[S.ticket]?.size === 'small';
+    const rnd = () => {
+      const r = Math.random();
+      if (r < 0.72) return 'green';
+      if (r < 0.92) return 'yellow';
+      return 'red';
+    };
+    const largeSystems = [
+      { id:'electrical', name:'Electrical Systems', detail:'All buses nominal', x:140, y:52 },
+      { id:'pressure', name:'Cabin Pressure', detail:'8.0 psi differential', x:140, y:80 },
+      { id:'engines', name:'Engines (x4)', detail:'CFM56-7B thrust nominal', x:38, y:118 },
+      { id:'wings', name:'Wings', detail:'Control surfaces nominal', x:252, y:108 },
+      { id:'gear', name:'Flight Gear', detail:'Gear retracted', x:140, y:143 },
+      { id:'tail', name:'Tail Wing', detail:'Stabilisers nominal', x:140, y:178 },
+    ];
+    const smallSystems = [
+      { id:'electrical', name:'Electrical Systems', detail:'Battery & alternator OK', x:140, y:68 },
+      { id:'engine', name:'Engine', detail:'Lycoming O-360 nominal', x:140, y:22 },
+      { id:'wings', name:'Wings', detail:'Control surfaces nominal', x:28, y:96 },
+      { id:'gear', name:'Flight Gear', detail:'Gear retracted', x:140, y:128 },
+      { id:'tail', name:'Tail Wing', detail:'Stabiliser nominal', x:140, y:162 },
+    ];
+    const systems = (isSmall ? smallSystems : largeSystems).map(s => ({ ...s, status: rnd() }));
+    return { isSmall, systems };
+  }
+
+  function diagSVGLarge(systems) {
+    const sysMap = {};
+    systems.forEach(s => { sysMap[s.id] = s.status; });
+    const col = id => DIAG_STATUS_COLS[sysMap[id]] || '#444';
+    return `<svg viewBox="0 0 280 200" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px">
+  <rect width="280" height="200" fill="#050e05"/>
+  <!-- Fuselage -->
+  <ellipse cx="140" cy="100" rx="13" ry="88" fill="none" stroke="#5ab0e8" stroke-width="1.5"/>
+  <!-- Main wings -->
+  <polygon points="130,75 22,120 26,130 134,92" fill="#0a1a2a" stroke="#5ab0e8" stroke-width="1"/>
+  <polygon points="150,75 258,120 254,130 146,92" fill="#0a1a2a" stroke="#5ab0e8" stroke-width="1"/>
+  <!-- Engine nacelles (L) -->
+  <ellipse cx="38" cy="118" rx="8" ry="13" fill="#0a1a2a" stroke="#5ab0e8" stroke-width="1"/>
+  <ellipse cx="78" cy="105" rx="7" ry="11" fill="#0a1a2a" stroke="#5ab0e8" stroke-width="1"/>
+  <!-- Engine nacelles (R) -->
+  <ellipse cx="202" cy="105" rx="7" ry="11" fill="#0a1a2a" stroke="#5ab0e8" stroke-width="1"/>
+  <ellipse cx="242" cy="118" rx="8" ry="13" fill="#0a1a2a" stroke="#5ab0e8" stroke-width="1"/>
+  <!-- Tail stabilisers -->
+  <polygon points="131,168 96,179 99,185 133,175" fill="#0a1a2a" stroke="#5ab0e8" stroke-width="1"/>
+  <polygon points="149,168 184,179 181,185 147,175" fill="#0a1a2a" stroke="#5ab0e8" stroke-width="1"/>
+  <!-- Nose -->
+  <ellipse cx="140" cy="18" rx="6" ry="8" fill="#0a1a2a" stroke="#5ab0e8" stroke-width="1"/>
+  <!-- Indicator dots with labels -->
+  <circle cx="140" cy="52" r="5" fill="${col('electrical')}" opacity="0.9"/>
+  <circle cx="140" cy="80" r="5" fill="${col('pressure')}" opacity="0.9"/>
+  <circle cx="38" cy="118" r="5" fill="${col('engines')}" opacity="0.9"/>
+  <circle cx="252" cy="108" r="5" fill="${col('wings')}" opacity="0.9"/>
+  <circle cx="140" cy="143" r="5" fill="${col('gear')}" opacity="0.9"/>
+  <circle cx="140" cy="178" r="5" fill="${col('tail')}" opacity="0.9"/>
+  <!-- Connecting lines to labels -->
+  <line x1="145" y1="52" x2="165" y2="52" stroke="#5ab0e8" stroke-width="0.5" opacity="0.4"/>
+  <line x1="145" y1="80" x2="165" y2="80" stroke="#5ab0e8" stroke-width="0.5" opacity="0.4"/>
+  <line x1="43" y1="118" x2="63" y2="118" stroke="#5ab0e8" stroke-width="0.5" opacity="0.4"/>
+  <line x1="247" y1="108" x2="227" y2="108" stroke="#5ab0e8" stroke-width="0.5" opacity="0.4"/>
+  <line x1="145" y1="143" x2="165" y2="143" stroke="#5ab0e8" stroke-width="0.5" opacity="0.4"/>
+  <line x1="145" y1="178" x2="165" y2="178" stroke="#5ab0e8" stroke-width="0.5" opacity="0.4"/>
+</svg>`;
+  }
+
+  function diagSVGSmall(systems) {
+    const sysMap = {};
+    systems.forEach(s => { sysMap[s.id] = s.status; });
+    const col = id => DIAG_STATUS_COLS[sysMap[id]] || '#444';
+    return `<svg viewBox="0 0 280 190" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:190px">
+  <rect width="280" height="190" fill="#050e05"/>
+  <!-- Fuselage -->
+  <ellipse cx="140" cy="95" rx="10" ry="74" fill="none" stroke="#88ff44" stroke-width="1.5"/>
+  <!-- Straight wings -->
+  <polygon points="132,88 20,96 22,104 134,95" fill="#0a1a0a" stroke="#88ff44" stroke-width="1"/>
+  <polygon points="148,88 260,96 258,104 146,95" fill="#0a1a0a" stroke="#88ff44" stroke-width="1"/>
+  <!-- Propeller at nose -->
+  <ellipse cx="140" cy="25" rx="6" ry="6" fill="#0a1a0a" stroke="#88ff44" stroke-width="1"/>
+  <line x1="140" y1="8" x2="140" y2="22" stroke="#88ff44" stroke-width="2"/>
+  <line x1="125" y1="20" x2="155" y2="20" stroke="#88ff44" stroke-width="2" stroke-linecap="round"/>
+  <!-- Tail stabilisers -->
+  <polygon points="132,155 100,165 102,171 134,162" fill="#0a1a0a" stroke="#88ff44" stroke-width="1"/>
+  <polygon points="148,155 180,165 178,171 146,162" fill="#0a1a0a" stroke="#88ff44" stroke-width="1"/>
+  <!-- Indicator dots -->
+  <circle cx="140" cy="68" r="5" fill="${col('electrical')}" opacity="0.9"/>
+  <circle cx="140" cy="22" r="5" fill="${col('engine')}" opacity="0.9"/>
+  <circle cx="28" cy="96" r="5" fill="${col('wings')}" opacity="0.9"/>
+  <circle cx="140" cy="128" r="5" fill="${col('gear')}" opacity="0.9"/>
+  <circle cx="140" cy="162" r="5" fill="${col('tail')}" opacity="0.9"/>
+  <!-- Lines -->
+  <line x1="145" y1="68" x2="165" y2="68" stroke="#88ff44" stroke-width="0.5" opacity="0.4"/>
+  <line x1="145" y1="22" x2="165" y2="22" stroke="#88ff44" stroke-width="0.5" opacity="0.4"/>
+  <line x1="33" y1="96" x2="53" y2="96" stroke="#88ff44" stroke-width="0.5" opacity="0.4"/>
+  <line x1="145" y1="128" x2="165" y2="128" stroke="#88ff44" stroke-width="0.5" opacity="0.4"/>
+  <line x1="145" y1="162" x2="165" y2="162" stroke="#88ff44" stroke-width="0.5" opacity="0.4"/>
+</svg>`;
+  }
+
+  function renderDiagPage() {
+    const inner = document.getElementById('tcfv-diag-inner');
+    if (!inner) return;
+    if (!S.diagnostics) S.diagnostics = generateDiagnostics();
+    const d = S.diagnostics;
+    // Update flight gear status based on flight phase
+    const gearSys = d.systems.find(s => s.id === 'gear');
+    if (gearSys) {
+      const phase = S.flying ? (S.arrTime && (S.arrTime - Date.now() < 120000) ? 'landing' : 'flying') : 'ground';
+      if (phase === 'ground' || phase === 'landing') gearSys.status = 'green';
+    }
+    const schematic = d.isSmall ? diagSVGSmall(d.systems) : diagSVGLarge(d.systems);
+    const acType = d.isSmall ? 'PRIVATE PLANE' : 'JUMBO JET';
+    const rows = d.systems.map(s => {
+      const col = DIAG_STATUS_COLS[s.status];
+      const label = s.status.toUpperCase();
+      return `<div class="diag-row">
+  <span class="diag-ind" style="background:${col}"></span>
+  <span class="diag-name">${s.name}</span>
+  <span class="diag-detail">${s.detail}</span>
+  <span class="diag-status" style="color:${col}">${label}</span>
+</div>`;
+    }).join('');
+    inner.innerHTML = `<div class="diag-header">
+  <span class="diag-title">&#9874; AIRCRAFT DIAGNOSTICS</span>
+  <span class="diag-type">${acType}</span>
+</div>
+<div class="diag-schematic">${schematic}</div>
+<div class="diag-systems">${rows}</div>`;
   }
 
   let radarMode = false;
@@ -1345,6 +1488,7 @@ ${dots}
     turbFired = false;
     S.inflightSchedule = null;
     S.inflightLogStart = null;
+    S.diagnostics = null;
     S.log = [];
     S.previewDst = null;
     saveS();
@@ -1519,6 +1663,26 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
 }
 #tcfv-resize-handle:hover { opacity: 1; }
 
+/* ── DIAGNOSTICS ── */
+#tcfv-diag { flex-direction: column; height: 100%; overflow-y: auto; background: #050e05; }
+#tcfv-diag-inner { padding: 0; flex: 1; }
+.diag-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px 4px; border-bottom: 1px solid #1a3520; }
+.diag-title { font-size: 9px; color: #44ff88; letter-spacing: 2.5px; text-transform: uppercase; }
+.diag-type { font-size: 9px; color: #336633; letter-spacing: 1px; }
+.diag-schematic { padding: 6px 8px 2px; border-bottom: 1px solid #0a2010; }
+.diag-systems { padding: 6px 8px; }
+.diag-row { display: grid; grid-template-columns: 10px 1fr 1fr 56px; gap: 4px; align-items: center; padding: 3px 0; border-bottom: 1px dotted #0a1a0a; }
+.diag-ind { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 5px currentColor; }
+.diag-name { font-size: 10px; color: #66bb66; }
+.diag-detail { font-size: 9px; color: #336633; }
+.diag-status { font-size: 9px; font-weight: bold; text-align: right; letter-spacing: 0.5px; }
+#tcfv.radar-mode #tcfv-diag { background: #000a00; }
+#tcfv.radar-mode .diag-header { border-bottom-color: #003300; }
+#tcfv.radar-mode .diag-title { color: #00ff44; }
+#tcfv.radar-mode .diag-type { color: #004400; }
+#tcfv.radar-mode .diag-name { color: #00cc44; }
+#tcfv.radar-mode .diag-detail { color: #004422; }
+#tcfv.radar-mode .diag-row { border-bottom-color: #001a00; }
 /* ── MORE SETTINGS ── */
 #tcfv-more { padding: 14px 16px; overflow-y: auto; height: 100%; box-sizing: border-box; }
 #tcfv-more h3 { color: #5ab0e8; font-size: 11px; margin: 0 0 12px; border-bottom: 1px solid #1e3d5c; padding-bottom: 6px; letter-spacing: 2px; text-transform: uppercase; }
