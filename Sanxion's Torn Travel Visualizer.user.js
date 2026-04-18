@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      16.0.0
+// @version      17.0.0
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/page.php?sid=travel*
@@ -203,7 +203,7 @@
     ticket:'standard', player:'Pilot', flying:false, isReturn:false,
     prevPhase:'', phasesTriggered:{}, turbTriggered:false, halfwayFired:false,
     log:[], px:20, py:60, pw:680, ph_panel:520, min:false, page:'main', apiKey:'',
-    previewDst:null, inflightSchedule:null, planeScale:100,
+    previewDst:null, inflightSchedule:null, planeScale:100, inflightLogStart:null,
   };
 
   const saveS = () => {
@@ -213,7 +213,7 @@
         ticket:S.ticket, player:S.player, flying:S.flying, isReturn:S.isReturn,
         prevPhase:S.prevPhase, phasesTriggered:S.phasesTriggered, turbTriggered:S.turbTriggered, halfwayFired:S.halfwayFired,
         log:S.log.slice(-30), px:S.px, py:S.py, pw:S.pw, ph_panel:S.ph_panel,
-        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale,
+        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale, inflightLogStart:S.inflightLogStart,
       }));
     } catch(e) {}
   };
@@ -226,6 +226,7 @@
       if (!S.inflightSchedule) S.inflightSchedule = null;
       if (S.halfwayFired === undefined) S.halfwayFired = false;
       if (!S.planeScale) S.planeScale = 100;
+      if (S.inflightLogStart === undefined) S.inflightLogStart = null;
     } catch(e) {}
   };
 
@@ -641,7 +642,9 @@ ${dots}
 
   function renderLog() {
     if (!el.log) return;
-    const lines = S.log.slice(-8);
+    // On refresh during inflight, show only inflight+ messages (not takeoff/ready)
+    const startIdx = (S.flying && S.inflightLogStart !== null) ? S.inflightLogStart : 0;
+    const lines = S.log.slice(startIdx).slice(-8);
     el.log.innerHTML = lines.map((t, i) =>
       `<div class="tl${i === lines.length-1 ? ' tln' : ''}">&rsaquo; ${t.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>`
     ).join('');
@@ -770,6 +773,11 @@ ${dots}
       if (phase === 'inflight') {
         // Mark as triggered so triggerComm won't double-fire, build schedule
         S.phasesTriggered.inflight = true;
+        // Record log index so refresh only shows inflight messages, not takeoff
+        if (S.inflightLogStart === null) {
+          S.inflightLogStart = S.log.length;
+          saveS();
+        }
         buildInflightSchedule();
       }
 
@@ -917,7 +925,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 16.0.0</p>
+    <p class="ver-t">Version 17.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1267,9 +1275,9 @@ ${dots}
     const arr = (travel.timestamp || 0) * 1000;
     if (!dest || !dep || !arr) return;
     const dk = matchDest(dest), tk = matchTicket(method);
-    // If we are already tracking this exact flight (same dep+arr times), do not
-    // reinitialise — doing so would clear S.log and lose the displayed commentary.
-    if (S.flying && S.depTime === dep && S.arrTime === arr) return;
+    // Do not reinitialise an already-tracked flight — would clear log and commentary.
+    // Use arrival time with tolerance since dep time may differ (click vs API timestamps).
+    if (S.flying && Math.abs(S.arrTime - arr) < 10000) return;
     if (dk && dk !== 'torn') {
       startFlightTimes('torn', dk, tk, dep, arr, false);
     } else if ((!dk || dk === 'torn') && S.src !== 'torn') {
@@ -1331,6 +1339,7 @@ ${dots}
     S.prevPhase = ''; S.phasesTriggered = {}; S.turbTriggered = false; S.halfwayFired = false;
     turbFired = false;
     S.inflightSchedule = null;
+    S.inflightLogStart = null;
     S.log = [];
     S.previewDst = null;
     saveS();
@@ -1395,6 +1404,8 @@ ${dots}
       const dk = matchDest(tr.destination || '');
       const tk = matchTicket(tr.method || '');
       const dep = tr.departed * 1000, arr = tr.timestamp * 1000;
+      // Do not reinitialise an already-tracked flight — would clear log and commentary
+      if (S.flying && Math.abs(S.arrTime - arr) < 10000) return;
       if (dk && dk !== 'torn') {
         startFlightTimes('torn', dk, tk, dep, arr, false);
       } else if (S.src !== 'torn') {
