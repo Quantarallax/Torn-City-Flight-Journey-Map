@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      14.0.0
+// @version      15.0.0
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/page.php?sid=travel*
@@ -917,7 +917,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 14.0.0</p>
+    <p class="ver-t">Version 15.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1267,6 +1267,9 @@ ${dots}
     const arr = (travel.timestamp || 0) * 1000;
     if (!dest || !dep || !arr) return;
     const dk = matchDest(dest), tk = matchTicket(method);
+    // If we are already tracking this exact flight (same dep+arr times), do not
+    // reinitialise — doing so would clear S.log and lose the displayed commentary.
+    if (S.flying && S.depTime === dep && S.arrTime === arr) return;
     if (dk && dk !== 'torn') {
       startFlightTimes('torn', dk, tk, dep, arr, false);
     } else if ((!dk || dk === 'torn') && S.src !== 'torn') {
@@ -1566,28 +1569,31 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
   ───────────────────────────────────────────────────────────── */
 
   function injectStatcounter() {
-    // Set Statcounter project vars on the real page window (unsafeWindow bypasses sandbox).
-    // Then inject counter.js as a genuine script tag so it runs in page context with proper
-    // browser origin and cookies — this is why GM_xmlhttpRequest returned 403 (wrong origin).
+    // Torn City's CSP blocks ALL external scripts not on its whitelist.
+    // statcounter.com is not whitelisted, so <script> injection will never work.
+    // Instead we load the tracking pixel as an <img> in page context (not CSP-restricted).
+    // The img must carry the same query params counter.js normally sends.
     try {
-      unsafeWindow.sc_project = 13031782;
-      unsafeWindow.sc_invisible = 1;
-      unsafeWindow.sc_security = 'af9e448b';
-      const sc = document.createElement('script');
-      sc.type = 'text/javascript';
-      sc.async = true;
-      sc.src = 'https://www.statcounter.com/counter/counter.js';
-      sc.onload = () => console.log('[TCFV] Statcounter script loaded OK');
-      sc.onerror = () => {
-        console.warn('[TCFV] Statcounter script blocked (CSP?), trying image fallback');
-        // CSP blocked the script — fall back to pixel with proper browser credentials
-        const img = unsafeWindow.document.createElement('img');
-        img.src = 'https://c.statcounter.com/13031782/0/af9e448b/1/';
-        img.style.display = 'none';
-        img.onload = () => console.log('[TCFV] Statcounter pixel loaded OK');
-        document.body.appendChild(img);
-      };
-      document.head.appendChild(sc);
+      const sid = Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
+      const res = screen.width + 'x' + screen.height;
+      const pageUrl = encodeURIComponent(location.href || 'https://www.torn.com/page.php?sid=travel');
+      const ref = encodeURIComponent(document.referrer || '');
+      const trackUrl = 'https://c.statcounter.com/13031782/0/af9e448b/1/'
+        + '?vn=5'
+        + '&sc_sid=' + sid
+        + '&sc_d=www.torn.com'
+        + '&sc_p=' + pageUrl
+        + '&sc_ref=' + ref
+        + '&sc_res=' + res
+        + '&sc_it=TC+Flight+Visualiser';
+      const img = document.createElement('img');
+      img.src = trackUrl;
+      img.width = 1;
+      img.height = 1;
+      img.style.cssText = 'position:absolute;left:-9999px;top:-9999px;';
+      img.onload = () => console.log('[TCFV] Statcounter tracked OK');
+      img.onerror = () => console.warn('[TCFV] Statcounter pixel blocked');
+      document.body.appendChild(img);
     } catch(e) {
       console.warn('[TCFV] Statcounter error', e);
     }
