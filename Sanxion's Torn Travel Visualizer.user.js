@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      20.0.0
+// @version      21.0.0
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/page.php?sid=travel*
@@ -884,9 +884,9 @@ ${dots}
     <button class="thb ta" id="thb-main" title="Flight View">&#9992;</button>
     <button class="thb" id="thb-diag" title="Diagnostics">&#9874;</button>
     <button class="thb" id="thb-set" title="API Settings">&#9881;</button>
-    <button class="thb" id="thb-more" title="Overlay">&#9965;</button>
+    <button class="thb" id="thb-more" title="General Setting">&#9965;</button>
+    <button class="thb" id="thb-radar" title="Overlay">&#9685;</button>
     <button class="thb" id="thb-cred" title="Credits">&#9733;</button>
-    <button class="thb" id="thb-radar" title="Toggle Radar / Normal mode">&#9685;</button>
     <button class="thb" id="thb-min" title="Minimise">&#8212;</button>
   </div>
 </div>
@@ -931,7 +931,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 20.0.0</p>
+    <p class="ver-t">Version 21.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -944,7 +944,7 @@ ${dots}
   </div>
 
   <div id="tcfv-more" class="tcfv-pg" style="display:none">
-    <h3>&#9965; Overlay</h3>
+    <h3>&#9965; General Setting</h3>
     <p>Adjust the size of the airplane image on the flight map.</p>
     <div id="tcfv-scale-wrap">
       <div class="scale-row">
@@ -1032,7 +1032,11 @@ ${dots}
     // Set initial preview scale
     if (previewPlane) previewPlane.setAttribute('transform', `scale(${(S.planeScale || 100) / 100})`);
     // Restore radar mode
-    try { if (GM_getValue('tcfv_radar', false)) doRadar(); } catch(e) {}
+    try {
+      const saved = GM_getValue('tcfv_radar', 0);
+      radarMode = typeof saved === 'number' ? saved : (saved ? 1 : 0);
+      if (radarMode > 0) applyRadarMode(el.panel);
+    } catch(e) {}
     // Restore minimise state directly (doMin toggles so cannot be used here)
     if (S.min) {
       el.bod.style.display = 'none';
@@ -1193,19 +1197,44 @@ ${dots}
 <div class="diag-systems">${rows}</div>`;
   }
 
-  let radarMode = false;
+  const RADAR_MODES = [
+    null,
+    { name:'green', rc:'#00ff44', mid:'#006622', dark:'#000a00', line:'#004400', glow:'rgba(0,255,68,.3)', hue:90 },
+    { name:'yellow', rc:'#ffee00', mid:'#665500', dark:'#0a0a00', line:'#444400', glow:'rgba(255,238,0,.3)', hue:45 },
+    { name:'cyan', rc:'#00ffee', mid:'#006655', dark:'#000a09', line:'#004440', glow:'rgba(0,255,238,.3)', hue:170 },
+    { name:'blue', rc:'#4488ff', mid:'#1a3a88', dark:'#000518', line:'#1a3060', glow:'rgba(68,136,255,.3)', hue:200 },
+    { name:'purple', rc:'#cc44ff', mid:'#551a88', dark:'#080010', line:'#440088', glow:'rgba(204,68,255,.3)', hue:270 },
+    { name:'orange', rc:'#ff8800', mid:'#883300', dark:'#0a0500', line:'#662200', glow:'rgba(255,136,0,.3)', hue:20 },
+    { name:'red', rc:'#ff2244', mid:'#881122', dark:'#0a0005', line:'#660022', glow:'rgba(255,34,68,.3)', hue:0 },
+    { name:'grey', rc:'#cccccc', mid:'#666666', dark:'#0a0a0a', line:'#333333', glow:'rgba(200,200,200,.2)', hue:0 },
+  ];
 
-  function doRadar() {
-    radarMode = !radarMode;
-    const panel = document.getElementById('tcfv');
-    if (radarMode) {
-      panel.classList.add('radar-mode');
-      document.querySelector('#thb-radar').classList.add('ta');
-    } else {
+  let radarMode = 0; // 0=normal, 1-8=colour modes
+
+  function applyRadarMode(panel) {
+    const mode = RADAR_MODES[radarMode];
+    const btn = document.querySelector('#thb-radar');
+    if (!mode) {
       panel.classList.remove('radar-mode');
-      document.querySelector('#thb-radar').classList.remove('ta');
+      ['--rc','--rc-mid','--rc-dark','--rc-line','--rc-glow','--rc-filter'].forEach(v => panel.style.removeProperty(v));
+      if (btn) { btn.classList.remove('ta'); btn.title = 'Overlay'; }
+    } else {
+      panel.classList.add('radar-mode');
+      panel.style.setProperty('--rc', mode.rc);
+      panel.style.setProperty('--rc-mid', mode.mid);
+      panel.style.setProperty('--rc-dark', mode.dark);
+      panel.style.setProperty('--rc-line', mode.line);
+      panel.style.setProperty('--rc-glow', mode.glow);
+      const g = mode.name === 'grey' ? 'grayscale(0.7) ' : '';
+      panel.style.setProperty('--rc-filter', `${g}sepia(1) saturate(4) hue-rotate(${mode.hue}deg) brightness(0.85)`);
+      if (btn) { btn.classList.add('ta'); btn.title = `Overlay (${mode.name})`; }
     }
     try { GM_setValue('tcfv_radar', radarMode); } catch(e) {}
+  }
+
+  function doRadar() {
+    radarMode = (radarMode + 1) % RADAR_MODES.length;
+    applyRadarMode(el.panel);
   }
 
   function doMin(silent) {
@@ -1676,13 +1705,13 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
 .diag-name { font-size: 10px; color: #66bb66; }
 .diag-detail { font-size: 9px; color: #336633; }
 .diag-status { font-size: 9px; font-weight: bold; text-align: right; letter-spacing: 0.5px; }
-#tcfv.radar-mode #tcfv-diag { background: #000a00; }
-#tcfv.radar-mode .diag-header { border-bottom-color: #003300; }
-#tcfv.radar-mode .diag-title { color: #00ff44; }
-#tcfv.radar-mode .diag-type { color: #004400; }
-#tcfv.radar-mode .diag-name { color: #00cc44; }
-#tcfv.radar-mode .diag-detail { color: #004422; }
-#tcfv.radar-mode .diag-row { border-bottom-color: #001a00; }
+#tcfv.radar-mode #tcfv-diag { background: var(--rc-dark); }
+#tcfv.radar-mode .diag-header { border-bottom-color: var(--rc-line); }
+#tcfv.radar-mode .diag-title { color: var(--rc); }
+#tcfv.radar-mode .diag-type { color: var(--rc-mid); }
+#tcfv.radar-mode .diag-name { color: var(--rc); }
+#tcfv.radar-mode .diag-detail { color: var(--rc-mid); }
+#tcfv.radar-mode .diag-row { border-bottom-color: var(--rc-line); }
 /* ── MORE SETTINGS ── */
 #tcfv-more { padding: 14px 16px; overflow-y: auto; height: 100%; box-sizing: border-box; }
 #tcfv-more h3 { color: #5ab0e8; font-size: 11px; margin: 0 0 12px; border-bottom: 1px solid #1e3d5c; padding-bottom: 6px; letter-spacing: 2px; text-transform: uppercase; }
@@ -1694,16 +1723,16 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
 #tcfv-scale-slider { width: 100%; accent-color: #4488ff; cursor: pointer; margin-bottom: 14px; }
 #tcfv-plane-preview-wrap { display: flex; flex-direction: column; align-items: center; margin-top: 6px; }
 #tcfv-plane-preview { border: 1px solid #1e3d5c; border-radius: 6px; }
-#tcfv.radar-mode #tcfv-more h3 { color: #00ff44 !important; border-bottom-color: #004400 !important; }
-#tcfv.radar-mode #tcfv-more p { color: #00aa33; }
-#tcfv.radar-mode #tcfv-scale-val { color: #00ff44; }
-#tcfv.radar-mode #tcfv-scale-slider { accent-color: #00ff44; }
-#tcfv.radar-mode #tcfv-plane-preview { border-color: #004400; background: #000800; }
-#tcfv.radar-mode .scale-row label { color: #006622; }
+#tcfv.radar-mode #tcfv-more h3 { color: var(--rc) !important; border-bottom-color: var(--rc-line) !important; }
+#tcfv.radar-mode #tcfv-more p { color: var(--rc-mid); }
+#tcfv.radar-mode #tcfv-scale-val { color: var(--rc); }
+#tcfv.radar-mode #tcfv-scale-slider { accent-color: var(--rc); }
+#tcfv.radar-mode #tcfv-plane-preview { border-color: var(--rc-line); background: var(--rc-dark); }
+#tcfv.radar-mode .scale-row label { color: var(--rc-mid); }
 #tcfv.radar-mode {
-  background: #000a00;
-  border-color: #00ff44;
-  box-shadow: 0 0 30px rgba(0,255,68,.35), 0 0 60px rgba(0,255,68,.15), inset 0 0 20px rgba(0,80,0,.4);
+  background: var(--rc-dark);
+  border-color: var(--rc);
+  box-shadow: 0 0 30px var(--rc-glow), 0 0 60px var(--rc-glow), inset 0 0 20px rgba(0,0,0,.4);
 }
 #tcfv.radar-mode::after {
   content: '';
@@ -1715,32 +1744,32 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
   border-radius: 8px;
 }
 #tcfv.radar-mode #tcfv-hdr {
-  background: linear-gradient(90deg,#000a00,#001500,#000a00);
-  border-bottom-color: #004400;
+  background: linear-gradient(90deg, var(--rc-dark), var(--rc-line), var(--rc-dark));
+  border-bottom-color: var(--rc-line);
 }
-#tcfv.radar-mode #tcfv-title { color: #00ff44; text-shadow: 0 0 12px #00ff44; }
-#tcfv.radar-mode .thb { background: #001200; border-color: #004400; color: #00cc33; }
-#tcfv.radar-mode .thb:hover,#tcfv.radar-mode .ta { background: #002800; color: #00ff44; border-color: #00aa33; }
-#tcfv.radar-mode #tcfv-mapbox { background: #000800; }
-#tcfv.radar-mode #tcfv-svg { filter: sepia(1) saturate(4) hue-rotate(90deg) brightness(0.85); }
-#tcfv.radar-mode #tcfv-lower,#tcfv.radar-mode #tcfv-set,#tcfv.radar-mode #tcfv-cred { background: #000a00; }
-#tcfv.radar-mode .ts { border-bottom-color: #002200; }
-#tcfv.radar-mode .tsl { color: #006622; }
-#tcfv.radar-mode .tsv { color: #00ff44; text-shadow: 0 0 6px #00ff44; }
-#tcfv.radar-mode #tcfv-atc-ttl { color: #006622; border-bottom-color: #002200; }
-#tcfv.radar-mode #tcfv-log { color: #00cc33; }
-#tcfv.radar-mode .tln { color: #00ff44 !important; text-shadow: 0 0 8px #00ff44; }
-#tcfv.radar-mode #tcfv-set p,#tcfv.radar-mode #tcfv-cred p { color: #00aa33; }
-#tcfv.radar-mode h3 { color: #00ff44 !important; border-bottom-color: #004400 !important; }
-#tcfv.radar-mode #tcfv-api-inp { background: #000a00; color: #00ff44; border-color: #004400; }
-#tcfv.radar-mode .tcfv-btn { background: #001200; color: #00cc33; border-color: #004400; }
-#tcfv.radar-mode .tcfv-btn:hover { background: #002800; }
-#tcfv.radar-mode hr { border-top-color: #003300; }
-#tcfv.radar-mode .note { color: #005522 !important; }
-#tcfv.radar-mode .big-t { color: #00ff44 !important; }
-#tcfv.radar-mode .ver-t { color: #006622 !important; }
-#tcfv.radar-mode #tcfv-author { color: #00ff44; }
-#tcfv.radar-mode #tcfv-author:hover { color: #88ffaa; }
+#tcfv.radar-mode #tcfv-title { color: var(--rc); text-shadow: 0 0 12px var(--rc); }
+#tcfv.radar-mode .thb { background: var(--rc-dark); border-color: var(--rc-line); color: var(--rc-mid); }
+#tcfv.radar-mode .thb:hover,#tcfv.radar-mode .ta { background: var(--rc-line); color: var(--rc); border-color: var(--rc-mid); }
+#tcfv.radar-mode #tcfv-mapbox { background: var(--rc-dark); }
+#tcfv.radar-mode #tcfv-svg { filter: var(--rc-filter); }
+#tcfv.radar-mode #tcfv-lower,#tcfv.radar-mode #tcfv-set,#tcfv.radar-mode #tcfv-cred { background: var(--rc-dark); }
+#tcfv.radar-mode .ts { border-bottom-color: var(--rc-line); }
+#tcfv.radar-mode .tsl { color: var(--rc-mid); }
+#tcfv.radar-mode .tsv { color: var(--rc); text-shadow: 0 0 6px var(--rc); }
+#tcfv.radar-mode #tcfv-atc-ttl { color: var(--rc-mid); border-bottom-color: var(--rc-line); }
+#tcfv.radar-mode #tcfv-log { color: var(--rc); }
+#tcfv.radar-mode .tln { color: var(--rc) !important; text-shadow: 0 0 8px var(--rc); }
+#tcfv.radar-mode #tcfv-set p,#tcfv.radar-mode #tcfv-cred p { color: var(--rc-mid); }
+#tcfv.radar-mode h3 { color: var(--rc) !important; border-bottom-color: var(--rc-line) !important; }
+#tcfv.radar-mode #tcfv-api-inp { background: var(--rc-dark); color: var(--rc); border-color: var(--rc-line); }
+#tcfv.radar-mode .tcfv-btn { background: var(--rc-dark); color: var(--rc-mid); border-color: var(--rc-line); }
+#tcfv.radar-mode .tcfv-btn:hover { background: var(--rc-line); }
+#tcfv.radar-mode hr { border-top-color: var(--rc-line); }
+#tcfv.radar-mode .note { color: var(--rc-line) !important; }
+#tcfv.radar-mode .big-t { color: var(--rc) !important; }
+#tcfv.radar-mode .ver-t { color: var(--rc-mid) !important; }
+#tcfv.radar-mode #tcfv-author { color: var(--rc); }
+#tcfv.radar-mode #tcfv-author:hover { color: var(--rc); opacity: 0.7; }
 `);
   }
 
