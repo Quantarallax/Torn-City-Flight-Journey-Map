@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      17.0.0
+// @version      18.0.0
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/page.php?sid=travel*
@@ -833,15 +833,24 @@ ${dots}
       if (scheduleChanged) saveS();
     }
 
-    // Halfway message — fires once at 50% progress during inflight
+    // Halfway message — fires once at 50% progress during inflight, branched by plane size
     if (!S.halfwayFired && progress >= 0.5 && phase === 'inflight') {
       S.halfwayFired = true;
       const minsLeft = Math.round(timeLeft / 60000);
-      addLog('Ladies and gentlemen, we are now halfway.');
-      setTimeout(() => {
-        addLog(`We are expected to land at ${arrivalTime}, which is in about ${minsLeft} minutes time.`);
-        saveS();
-      }, 2000);
+      const small = TICKETS[S.ticket]?.size === 'small';
+      if (small) {
+        addLog('Halfway there.');
+        setTimeout(() => {
+          addLog(`Probably land at ${arrivalTime}, which is about ${minsLeft} minutes time.`);
+          saveS();
+        }, 2000);
+      } else {
+        addLog('Ladies and gentlemen, we are now halfway.');
+        setTimeout(() => {
+          addLog(`We are expected to land at ${arrivalTime}, which is in about ${minsLeft} minutes time.`);
+          saveS();
+        }, 2000);
+      }
       saveS();
     }
     if (!S.turbTriggered && (phase === 'inflight' || phase === 'descent') && Math.random() < 0.003) {
@@ -920,12 +929,15 @@ ${dots}
     <p id="tcfv-api-msg"></p>
     <hr>
     <p class="note">Your API key is stored locally in Tampermonkey's secure storage and is only ever sent to api.torn.com. It is never transmitted anywhere else.</p>
+    <hr>
+    <p style="color:#4a7a9a;font-size:9px;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Statcounter Analytics</p>
+    <p class="note">Statcounter tracking is blocked by Torn City's Content Security Policy, which does not whitelist statcounter.com for either scripts or images. The tracker runs via GM_xmlhttpRequest (bypasses CSP) but Statcounter's server also blocks requests without a valid browser session. This is a Torn-side restriction and cannot be resolved from within the script.</p>
   </div>
 
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 17.0.0</p>
+    <p class="ver-t">Version 18.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
