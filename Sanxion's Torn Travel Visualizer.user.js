@@ -1,21 +1,17 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      18.0.0
+// @version      19.0.0
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/page.php?sid=travel*
 // @updateURL    https://github.com/Quantarallax/Torn-City-Flight-Journey-Map/raw/refs/heads/main/Sanxion's%20Torn%20Travel%20Visualizer.user.js
 // @downloadURL  https://github.com/Quantarallax/Torn-City-Flight-Journey-Map/raw/refs/heads/main/Sanxion's%20Torn%20Travel%20Visualizer.user.js
 // @connect      api.torn.com
-// @connect      statcounter.com
-// @connect      c.statcounter.com
-// @connect      www.statcounter.com
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
-// @grant        unsafeWindow
 // @run-at       document-end
 // ==/UserScript==
 
@@ -929,15 +925,12 @@ ${dots}
     <p id="tcfv-api-msg"></p>
     <hr>
     <p class="note">Your API key is stored locally in Tampermonkey's secure storage and is only ever sent to api.torn.com. It is never transmitted anywhere else.</p>
-    <hr>
-    <p style="color:#4a7a9a;font-size:9px;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Statcounter Analytics</p>
-    <p class="note">Statcounter tracking is blocked by Torn City's Content Security Policy, which does not whitelist statcounter.com for either scripts or images. The tracker runs via GM_xmlhttpRequest (bypasses CSP) but Statcounter's server also blocks requests without a valid browser session. This is a Torn-side restriction and cannot be resolved from within the script.</p>
   </div>
 
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 18.0.0</p>
+    <p class="ver-t">Version 19.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1591,36 +1584,8 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
      INIT
   ───────────────────────────────────────────────────────────── */
 
-  function injectStatcounter() {
-    // Torn City's CSP blocks ALL external resources from statcounter.com —
-    // both <script> and <img> approaches are rejected by Torn's content-security-policy.
-    // GM_xmlhttpRequest is the only method that bypasses CSP (runs outside the page sandbox).
-    // anonymous:false sends any existing statcounter.com browser cookies with the request.
-    // No Referer header is set — spoofing it caused 403 in earlier versions.
-    try {
-      const sid = Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
-      const trackUrl = 'https://c.statcounter.com/13031782/0/af9e448b/1/'
-        + '?vn=5'
-        + '&sc_sid=' + sid
-        + '&sc_d=www.torn.com'
-        + '&sc_p=' + encodeURIComponent('https://www.torn.com/page.php?sid=travel')
-        + '&sc_res=' + screen.width + 'x' + screen.height
-        + '&sc_it=TC+Flight+Visualiser';
-      GM_xmlhttpRequest({
-        method: 'GET',
-        url: trackUrl,
-        anonymous: false,
-        onload: r => console.log('[TCFV] Statcounter — status', r.status),
-        onerror: () => console.warn('[TCFV] Statcounter request failed'),
-      });
-    } catch(e) {
-      console.warn('[TCFV] Statcounter error', e);
-    }
-  }
-
   function init() {
     loadS();
-    injectStatcounter();
     // Only build the HUD if fastRestore hasn't already created the panel
     if (!document.getElementById('tcfv')) {
       injectCSS();
