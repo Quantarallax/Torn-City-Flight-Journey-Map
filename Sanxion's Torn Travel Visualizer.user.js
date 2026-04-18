@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      15.0.0
+// @version      16.0.0
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/page.php?sid=travel*
@@ -917,7 +917,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 15.0.0</p>
+    <p class="ver-t">Version 16.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1569,31 +1569,27 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
   ───────────────────────────────────────────────────────────── */
 
   function injectStatcounter() {
-    // Torn City's CSP blocks ALL external scripts not on its whitelist.
-    // statcounter.com is not whitelisted, so <script> injection will never work.
-    // Instead we load the tracking pixel as an <img> in page context (not CSP-restricted).
-    // The img must carry the same query params counter.js normally sends.
+    // Torn City's CSP blocks ALL external resources from statcounter.com —
+    // both <script> and <img> approaches are rejected by Torn's content-security-policy.
+    // GM_xmlhttpRequest is the only method that bypasses CSP (runs outside the page sandbox).
+    // anonymous:false sends any existing statcounter.com browser cookies with the request.
+    // No Referer header is set — spoofing it caused 403 in earlier versions.
     try {
       const sid = Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
-      const res = screen.width + 'x' + screen.height;
-      const pageUrl = encodeURIComponent(location.href || 'https://www.torn.com/page.php?sid=travel');
-      const ref = encodeURIComponent(document.referrer || '');
       const trackUrl = 'https://c.statcounter.com/13031782/0/af9e448b/1/'
         + '?vn=5'
         + '&sc_sid=' + sid
         + '&sc_d=www.torn.com'
-        + '&sc_p=' + pageUrl
-        + '&sc_ref=' + ref
-        + '&sc_res=' + res
+        + '&sc_p=' + encodeURIComponent('https://www.torn.com/page.php?sid=travel')
+        + '&sc_res=' + screen.width + 'x' + screen.height
         + '&sc_it=TC+Flight+Visualiser';
-      const img = document.createElement('img');
-      img.src = trackUrl;
-      img.width = 1;
-      img.height = 1;
-      img.style.cssText = 'position:absolute;left:-9999px;top:-9999px;';
-      img.onload = () => console.log('[TCFV] Statcounter tracked OK');
-      img.onerror = () => console.warn('[TCFV] Statcounter pixel blocked');
-      document.body.appendChild(img);
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: trackUrl,
+        anonymous: false,
+        onload: r => console.log('[TCFV] Statcounter — status', r.status),
+        onerror: () => console.warn('[TCFV] Statcounter request failed'),
+      });
     } catch(e) {
       console.warn('[TCFV] Statcounter error', e);
     }
@@ -1602,11 +1598,15 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
   function init() {
     loadS();
     injectStatcounter();
-    injectCSS();
-    buildHUD();
-
-    // Replay saved log (no duplicates — just reprint what was already there)
-    renderLog();
+    // Only build the HUD if fastRestore hasn't already created the panel
+    if (!document.getElementById('tcfv')) {
+      injectCSS();
+      buildHUD();
+      renderLog();
+    } else {
+      // Panel already exists — just wire up the dynamic hooks
+      injectCSS(); // safe to call again (adds/overwrites styles)
+    }
 
     hookClicks();
     hookNetwork();
@@ -1634,10 +1634,26 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
     initFromApi();
   }
 
+  // Fast path: restore panel and log immediately when we already have saved state.
+  // Full init (DOM hooks, network hooks) runs slightly later to let Torn's page settle.
+  function fastRestore() {
+    loadS();
+    if (S.flying || S.px !== 20 || S.py !== 60) {
+      // We have real saved state — show panel immediately
+      injectCSS();
+      buildHUD();
+      renderLog();
+    }
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => setTimeout(init, 700));
+    document.addEventListener('DOMContentLoaded', () => {
+      setTimeout(fastRestore, 100);
+      setTimeout(init, 400);
+    });
   } else {
-    setTimeout(init, 700);
+    setTimeout(fastRestore, 100);
+    setTimeout(init, 400);
   }
 
 })();
