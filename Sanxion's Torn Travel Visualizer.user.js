@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      11.0.0
+// @version      12.0.0
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/page.php?sid=travel*
@@ -9,6 +9,7 @@
 // @downloadURL  https://github.com/Quantarallax/Torn-City-Flight-Journey-Map/raw/refs/heads/main/Sanxion's%20Torn%20Travel%20Visualizer.user.js
 // @connect      api.torn.com
 // @connect      statcounter.com
+// @connect      c.statcounter.com
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle
@@ -914,7 +915,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 11.0.0</p>
+    <p class="ver-t">Version 12.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1554,14 +1555,17 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
   ───────────────────────────────────────────────────────────── */
 
   function injectStatcounter() {
-    // Ping the Statcounter invisible pixel via GM_xmlhttpRequest
-    // This is the correct method for Tampermonkey — script injection is blocked by CSP on Torn
+    // Ping the Statcounter invisible pixel via GM_xmlhttpRequest.
+    // @connect c.statcounter.com is required — statcounter.com alone does NOT cover subdomains.
     GM_xmlhttpRequest({
       method: 'GET',
       url: 'https://c.statcounter.com/13031782/0/af9e448b/1/',
-      headers: { 'Referer': 'https://www.torn.com/page.php?sid=travel' },
-      onload: () => {},
-      onerror: () => {},
+      headers: {
+        'Referer': 'https://www.torn.com/page.php?sid=travel',
+        'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+      },
+      onload: r => console.log('[TCFV] Statcounter pinged OK — status', r.status),
+      onerror: e => console.warn('[TCFV] Statcounter ping failed', e),
     });
   }
 
