@@ -15,9 +15,11 @@ There is also a CRT green screen radar mode.
 
 Other modes cycle through display colours.
 
+<img width="993" height="677" alt="image" src="https://github.com/user-attachments/assets/d5c6b179-a6d8-43e1-9f45-5984ef9e5d8d" />
+
 There is a airplane diagnostic mode to asses the state of the airplane.
 
-<img width="993" height="677" alt="image" src="https://github.com/user-attachments/assets/d5c6b179-a6d8-43e1-9f45-5984ef9e5d8d" />
+<img width="993" height="676" alt="image" src="https://github.com/user-attachments/assets/0aea4109-94d8-4e8f-b080-8b228e785001" />
 
 You can enter a public API if you so wish. This basically gives you more of a direct method of seeing the current flight data.
 
