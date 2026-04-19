@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      23.0.0
+// @version      24.0.0
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/page.php?sid=travel*
@@ -76,6 +76,7 @@
     descent: { label:'DESCENT', col:'#ffaa44' },
     landing: { label:'LANDING', col:'#ff8844' },
     arrived: { label:'LANDED', col:'#44ff88' },
+    airport_closed: { label:'AIRPORT CLOSED', col:'#ff3333' },
   };
 
   const WEATHER = ['clear skies','partly cloudy','overcast','light rain','warm and humid','cool and breezy','sunny with light winds','scattered showers'];
@@ -730,6 +731,23 @@ ${dots}
   }
 
   function tick() {
+    // Airport closed check — runs regardless of flying state
+    const pageBody = document.body ? document.body.innerText : '';
+    if (pageBody.includes('You are currently in a race, you must leave or wait')) {
+      if (!S._airportClosedShown) {
+        S._airportClosedShown = true;
+        if (el.status) {
+          el.status.textContent = PHASE_CFG.airport_closed.label;
+          el.status.style.color = PHASE_CFG.airport_closed.col;
+        }
+        addLog('Airport closed — you are in a race.');
+        saveS();
+      }
+      loopTmr = setTimeout(tick, 3000);
+      return;
+    }
+    S._airportClosedShown = false;
+
     if (!S.flying || !S.dst) {
       updateStats(0, 0);
       loopTmr = setTimeout(tick, 2000);
@@ -931,7 +949,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 23.0.0</p>
+    <p class="ver-t">Version 24.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
