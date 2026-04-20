@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      24.0.0
+// @version      25.0.0
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/page.php?sid=travel*
@@ -478,8 +478,8 @@ ${dots}
     if (dashAnimId) cancelAnimationFrame(dashAnimId);
     const step = () => {
       dashOffset = (dashOffset + 0.4) % 20;
-      const polyline = document.getElementById('tcfv-route-line');
-      if (polyline) polyline.style.strokeDashoffset = -dashOffset;
+      const ahead = document.getElementById('tcfv-route-ahead');
+      if (ahead) ahead.style.strokeDashoffset = -dashOffset;
       dashAnimId = requestAnimationFrame(step);
     };
     dashAnimId = requestAnimationFrame(step);
@@ -489,27 +489,69 @@ ${dots}
     if (dashAnimId) { cancelAnimationFrame(dashAnimId); dashAnimId = null; }
   }
 
+  // Pre-computed bezier point array for current route (cached to avoid recalc every frame)
+  let _pathPts = null;
+  let _pathKey = '';
+
+  function getPathPts(sk, dk) {
+    const key = `${sk}-${dk}`;
+    if (_pathKey === key && _pathPts) return _pathPts;
+    const { s, d, c } = buildBez(sk, dk);
+    const pts = [];
+    for (let i = 0; i <= 120; i++) {
+      const p = bPt(i / 120, s, c, d);
+      pts.push(`${p.x.toFixed(1)},${p.y.toFixed(1)}`);
+    }
+    _pathPts = pts;
+    _pathKey = key;
+    return pts;
+  }
+
   /* ─────────────────────────────────────────────────────────────
-     DRAW FLIGHT PATH
+     DRAW FLIGHT PATH  — solid trail behind plane, dashes ahead
   ───────────────────────────────────────────────────────────── */
 
   function drawPath(sk, dk) {
     const g = document.getElementById('tcfv-pathg');
     if (!g) return;
-    if (!sk || !dk || sk === dk) { g.innerHTML = ''; stopDashAnim(); return; }
-    const { s, d, c } = buildBez(sk, dk);
-    const pts = [];
-    for (let i = 0; i <= 120; i++) { const p = bPt(i/120, s, c, d); pts.push(`${p.x.toFixed(1)},${p.y.toFixed(1)}`); }
+    if (!sk || !dk || sk === dk) {
+      g.innerHTML = '';
+      stopDashAnim();
+      _pathPts = null;
+      _pathKey = '';
+      return;
+    }
+    const pts = getPathPts(sk, dk);
     const col = TICKETS[S.ticket]?.col || '#fff';
-    g.innerHTML = `<polyline id="tcfv-route-line" points="${pts.join(' ')}" fill="none" stroke="${col}" stroke-width="2" stroke-dasharray="12,8" stroke-linecap="round" opacity="0.65"/>
+    const { s } = buildBez(sk, dk);
+    const { d } = buildBez(sk, dk);
+    // Initially draw full path as dashes (progress=0). updatePathProgress() splits it when flying.
+    g.innerHTML = `
+<polyline id="tcfv-route-trail" points="${pts[0]}" fill="none" stroke="${col}" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+<polyline id="tcfv-route-ahead" points="${pts.join(' ')}" fill="none" stroke="${col}" stroke-width="2" stroke-dasharray="12,8" stroke-linecap="round" opacity="0.55"/>
 <circle cx="${s.x.toFixed(1)}" cy="${s.y.toFixed(1)}" r="5" fill="${DESTS[sk]?.col||'#fff'}" opacity="0.9" filter="url(#gl)"/>
 <circle cx="${d.x.toFixed(1)}" cy="${d.y.toFixed(1)}" r="5" fill="${DESTS[dk]?.col||'#fff'}" opacity="0.9" filter="url(#gl)"/>`;
     startDashAnim();
   }
 
-  /* ─────────────────────────────────────────────────────────────
-     DRAW PLANE  (SVG path shapes by ticket/plane type)
-  ───────────────────────────────────────────────────────────── */
+  // Called every tick to split the path at the plane's current position
+  function updatePathProgress(progress, sk, dk) {
+    if (!sk || !dk || sk === dk) return;
+    const trail = document.getElementById('tcfv-route-trail');
+    const ahead = document.getElementById('tcfv-route-ahead');
+    if (!trail || !ahead) return;
+    const pts = getPathPts(sk, dk);
+    const N = pts.length - 1;
+    // Split index based on progress
+    const splitIdx = Math.max(0, Math.min(N, Math.round(progress * N)));
+    // Trail: solid line from start to plane position
+    const trailPts = pts.slice(0, splitIdx + 1);
+    const aheadPts = pts.slice(splitIdx);
+    if (trailPts.length >= 2) trail.setAttribute('points', trailPts.join(' '));
+    else trail.setAttribute('points', pts[0] + ' ' + pts[0]);
+    if (aheadPts.length >= 2) ahead.setAttribute('points', aheadPts.join(' '));
+    else ahead.setAttribute('points', pts[N] + ' ' + pts[N]);
+  }
 
   function drawPlane(progress, sk, dk) {
     const g = document.getElementById('tcfv-planeg');
@@ -882,6 +924,7 @@ ${dots}
 
     updateStats(progress, timeLeft);
     drawPlane(progress, S.src, S.dst);
+    updatePathProgress(progress, S.src, S.dst);
     loopTmr = setTimeout(tick, 1000);
   }
 
@@ -949,7 +992,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 24.0.0</p>
+    <p class="ver-t">Version 25.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
