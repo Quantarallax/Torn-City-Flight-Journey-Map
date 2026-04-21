@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      25.0.0
+// @version      26.0.0
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
 // @match        https://www.torn.com/page.php?sid=travel*
 // @updateURL    https://github.com/Quantarallax/Torn-City-Flight-Journey-Map/raw/refs/heads/main/Sanxion's%20Torn%20Travel%20Visualizer.user.js
 // @downloadURL  https://github.com/Quantarallax/Torn-City-Flight-Journey-Map/raw/refs/heads/main/Sanxion's%20Torn%20Travel%20Visualizer.user.js
 // @connect      api.torn.com
+// @connect      c.statcounter.com
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle
@@ -992,7 +993,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 25.0.0</p>
+    <p class="ver-t">Version 26.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1838,8 +1839,33 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
      INIT
   ───────────────────────────────────────────────────────────── */
 
+  function injectStatcounter() {
+    // Fires a 1×1 invisible tracking pixel to c.statcounter.com via a hidden <img>.
+    // Waits for window.load first (or fires immediately if already loaded) so it
+    // behaves like a standard bottom-of-page analytics snippet.
+    // The { once: true } option removes the listener automatically after it fires.
+    const fire = () => {
+      try {
+        const sid = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        const img = document.createElement('img');
+        img.src = 'https://c.statcounter.com/13031782/0/af9e448b/1/?sc_sid=' + sid;
+        img.width = 1;
+        img.height = 1;
+        img.style.cssText = 'position:absolute;left:-9999px;top:-9999px;pointer-events:none;';
+        img.alt = '';
+        document.body.appendChild(img);
+      } catch(e) {}
+    };
+    if (document.readyState === 'complete') {
+      fire();
+    } else {
+      window.addEventListener('load', fire, { once: true });
+    }
+  }
+
   function init() {
     loadS();
+    injectStatcounter();
     // Only build the HUD if fastRestore hasn't already created the panel
     if (!document.getElementById('tcfv')) {
       injectCSS();
