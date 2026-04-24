@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      29.0.0
+// @version      30.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -994,7 +994,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 29.0.0</p>
+    <p class="ver-t">Version 30.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1903,16 +1903,14 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
     initFromApi();
   }
 
-  // Fast path: restore panel and log immediately when we already have saved state.
-  // Full init (DOM hooks, network hooks) runs slightly later to let Torn's page settle.
+  // Fast path: always restore panel immediately at 100ms so minimise/position/page
+  // state is applied before the user sees anything. init() at 400ms wires up hooks
+  // and skips rebuilding the panel (guards with getElementById).
   function fastRestore() {
     loadS();
-    if (S.flying || S.min || S.px !== 20 || S.py !== 60 || S.page !== 'main') {
-      // We have real saved state — show panel immediately
-      injectCSS();
-      buildHUD();
-      renderLog();
-    }
+    injectCSS();
+    buildHUD();
+    renderLog();
   }
 
   if (document.readyState === 'loading') {
