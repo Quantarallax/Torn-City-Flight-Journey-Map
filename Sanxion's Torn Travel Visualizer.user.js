@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      30.0.0
+// @version      31.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -994,7 +994,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 30.0.0</p>
+    <p class="ver-t">Version 31.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1060,7 +1060,7 @@ ${dots}
     makeDrag(panel, panel.querySelector('#tcfv-hdr'));
     makeResize(panel, panel.querySelector('#tcfv-resize-handle'));
 
-    panel.querySelector('#thb-min').addEventListener('click', doMin);
+    panel.querySelector('#thb-min').addEventListener('click', () => doMin(false));
     panel.querySelector('#thb-radar').addEventListener('click', doRadar);
     panel.querySelector('#thb-main').addEventListener('click', () => showPg('main'));
     panel.querySelector('#thb-diag').addEventListener('click', () => showPg('diag'));
