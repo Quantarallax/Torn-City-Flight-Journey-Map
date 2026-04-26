@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      31.0.0
+// @version      32.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -93,7 +93,8 @@
   // Fixed messages always shown at start of inflight phase
   const INFLIGHT_FIXED_START_LARGE = [
     p => `Levelling off at ${p.maxAlt.toLocaleString()} feet. Weather good. All clear.`,
-    () => 'Seat belt sign has been turned off.',
+    () => 'Seatbelt sign has been turned off.',
+    p => `${p.name} stretches in their seat ready for the flight ahead.`,
   ];
   const INFLIGHT_FIXED_START_SMALL = [
     p => `Levelling off at ${p.maxAlt.toLocaleString()} feet. Weather good. All clear.`,
@@ -107,15 +108,20 @@
   // Random pool for large planes — subset picked each flight
   const INFLIGHT_RANDOM_LARGE = [
     () => 'A baby starts crying across the aisle.',
+    () => 'Another small plane flies past, the pilot lunatic eyed and looking crazy.',
+    () => 'An indistinct shape walks down the aisle, grey coloured, but no discernable features.',
     () => 'Chedburn flies past.',
     p => `${p.name}'s seat gets constantly kicked from behind by a small child.`,
+    () => 'A burning smell eminates from the aircon system.',
+    () => 'Several passengers look particularly stark, raving, mad.',
     () => 'A couple a few rows back start fighting each other.',
+    () => 'The passenger in front is a horse.',
     () => "Someone starts shouting, 'I'm sick of these m*fucking snakes on this m*fucking plane.'",
     () => 'Outside the window, a shadowy figure smashes up the wing.',
     () => 'A Canadian guy stares wide-eyed at the destruction to the wing.',
     () => 'WARNING: Flight proximity alert!',
     () => 'ATC stand by, unsure of error reason.',
-    () => 'A jet flies past, upside down.',
+    () => 'A jet flies past upside down — turbulence rocks the plane.',
   ];
   // Random pool for small planes — subset picked each flight
   const INFLIGHT_RANDOM_SMALL = [
@@ -123,7 +129,8 @@
     () => 'The engine hums steadily.',
     () => 'WARNING: Flight proximity alert!',
     () => 'ATC stand by, unsure of error reason.',
-    p => `${p.name} glances down at the patchwork of fields below.`,
+    p => `${p.name} does a loop the loop, here we go!`,
+    () => 'A jet flies past — turbulence rocks the plane.',
   ];
 
   // Helper — returns the right commentary array based on plane size
@@ -138,6 +145,7 @@
     ready_small: [
       p => `${p.name} requesting clearance for take-off from ${p.src} Airport.`,
       p => `Preflight checks confirmed. ${p.name}.`,
+      () => 'Ready for instructions.',
     ],
     takeoff_large: [
       () => 'Cabin crew, cross-check ready for departure.',
@@ -148,7 +156,7 @@
     ],
     takeoff_small: [
       p => `ATC: ${p.name}, you are cleared for take-off. Runway 1C. Proceed.`,
-      () => 'Increasing speed, throttle engaged.',
+      () => 'Tower, increasing speed, throttle engaged.',
       p => `Climbing to ${p.maxAlt.toLocaleString()} feet.`,
     ],
     turbulence: [
@@ -158,20 +166,30 @@
       () => 'Cabin crew, prepare for descent.',
       () => 'Miss Mile High Club pops her head up from behind a seat near the front.',
       () => 'Someone honks up their in-flight meal.',
-      () => 'Ladies and gentlemen, please fasten your seat belts.',
+      () => 'Please fasten your seatbelts.',
+      () => 'Thank you for flying with us.',
       p => `Weather in ${p.dst} is ${rndW()}. Have a nice day.`,
       p => `${p.name} checks their weapons ready for plane disembarkation.`,
     ],
     descent_small: [
+      () => 'Radar shows a clear descent vector.',
       p => `${p.name} flicks a few switches, initiating descent.`,
       p => `${p.name} requesting clearance into ${p.dst}.`,
       () => 'ATC: Confirmed, follow pre-planned flight path.',
       p => `Weather in ${p.dst} is ${rndW()}. Have a nice day.`,
       p => `${p.name} checks their weapons ready for plane disembarkation.`,
     ],
-    landing: [
-      () => 'Slight turbulence, but not too bad.',
+    landing_large: [
+      () => 'Ladies and gentleman, we are close to landing. Please put seat backs in the upright position.',
+      () => 'This is your captain speaking, burp, oops there goes the... click.',
+      () => 'The to-ing and fro-ing of the plane is unnerving.',
       () => 'Yes, weapons look good and oiled.',
+    ],
+    landing_small: [
+      () => 'Slight turbulence, but not too bad.',
+      () => 'Approach is clear, no crosswind.',
+      () => 'Yes, weapons look good and oiled.',
+      () => "You can't wait to get out of this thing.",
     ],
     arrived: [
       () => '*Screech of tyres on tarmac.*',
@@ -179,6 +197,7 @@
       p => p.isTornCity
         ? 'Welcome to Torn City, please enjoy your stay, however long it will be. Stay safe. Thank you.'
         : 'Remember: due to current circumstances, it is advisable to get your business done, and then leave the country. Thank you.',
+      p => p.isTornCity ? 'Right, back to business.' : null,
     ],
     return_start: [
       () => 'Refuel complete. Taxiing to runway. Have a nice flight.',
@@ -188,9 +207,11 @@
   };
 
   // Get commentary for size-dependent phases
+  // Null entries in arrived are filtered (e.g. 'Right, back to business' only for Torn City)
   function getComm(phase, small) {
     const key = `${phase}_${small ? 'small' : 'large'}`;
-    return COMMENTARY[key] || COMMENTARY[phase] || [];
+    const arr = COMMENTARY[key] || COMMENTARY[phase] || [];
+    return arr.filter(fn => fn !== null);
   }
 
   /* ─────────────────────────────────────────────────────────────
@@ -702,7 +723,10 @@ ${dots}
     const rid = (phRunId[phase] = (phRunId[phase] || 0) + 1);
     msgs.forEach((fn, i) => {
       setTimeout(() => {
-        if (phRunId[phase] === rid) addLog(fn(params));
+        if (phRunId[phase] === rid) {
+          const msg = fn(params);
+          if (msg) addLog(msg);
+        }
       }, i * 3800);
     });
   }
@@ -784,11 +808,16 @@ ${dots}
           el.status.textContent = PHASE_CFG.airport_closed.label;
           el.status.style.color = PHASE_CFG.airport_closed.col;
         }
-        addLog('Airport closed — you are in a race.');
+        addLog('Airport closed — you are in a <a href="https://www.torn.com/page.php?sid=racing" target="_blank" style="color:#ff6666">race</a>.');
         saveS();
       }
       loopTmr = setTimeout(tick, 3000);
       return;
+    }
+    if (S._airportClosedShown) {
+      // Was closed, now re-opened — show message once
+      addLog('Airport has re-opened.');
+      saveS();
     }
     S._airportClosedShown = false;
 
@@ -847,7 +876,8 @@ ${dots}
         const capturedParams = Object.assign({}, params); // snapshot before any state change
         arrivedFns.forEach((fn, i) => {
           setTimeout(() => {
-            addLog(fn(capturedParams));
+            const msg = fn(capturedParams);
+            if (msg) addLog(msg);
             if (i === arrivedFns.length - 1) {
               // All arrived messages are now in the log — safe to reset and save
               const newSrc = S.dst;
@@ -994,7 +1024,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 31.0.0</p>
+    <p class="ver-t">Version 32.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
