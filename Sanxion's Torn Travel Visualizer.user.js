@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      33.0.0
+// @version      34.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -223,7 +223,7 @@
     ticket:'standard', player:'Pilot', flying:false, isReturn:false,
     prevPhase:'', phasesTriggered:{}, turbTriggered:false, halfwayFired:false,
     log:[], px:20, py:60, pw:680, ph_panel:520, min:false, page:'main', apiKey:'',
-    previewDst:null, inflightSchedule:null, planeScale:100, inflightLogStart:null, diagnostics:null,
+    previewDst:null, inflightSchedule:null, planeScale:100, inflightLogStart:null, diagnostics:null, airportClosed:false,
   };
 
   const saveS = () => {
@@ -233,7 +233,7 @@
         ticket:S.ticket, player:S.player, flying:S.flying, isReturn:S.isReturn,
         prevPhase:S.prevPhase, phasesTriggered:S.phasesTriggered, turbTriggered:S.turbTriggered, halfwayFired:S.halfwayFired,
         log:S.log.slice(-30), px:S.px, py:S.py, pw:S.pw, ph_panel:S.ph_panel,
-        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale, inflightLogStart:S.inflightLogStart, diagnostics:S.diagnostics,
+        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale, inflightLogStart:S.inflightLogStart, diagnostics:S.diagnostics, airportClosed:S.airportClosed,
       }));
     } catch(e) {}
   };
@@ -805,8 +805,8 @@ ${dots}
     // Airport closed check — runs regardless of flying state
     const pageBody = document.body ? document.body.innerText : '';
     if (pageBody.includes('You are currently in a race, you must leave or wait')) {
-      if (!S._airportClosedShown) {
-        S._airportClosedShown = true;
+      if (!S.airportClosed) {
+        S.airportClosed = true;
         if (el.status) {
           el.status.textContent = PHASE_CFG.airport_closed.label;
           el.status.style.color = PHASE_CFG.airport_closed.col;
@@ -817,12 +817,12 @@ ${dots}
       loopTmr = setTimeout(tick, 3000);
       return;
     }
-    if (S._airportClosedShown) {
-      // Was closed, now re-opened — show message once
+    if (S.airportClosed) {
+      // Was closed — either in this session or on a previous refresh — show re-opened once
+      S.airportClosed = false;
       addLog('Airport has re-opened.');
       saveS();
     }
-    S._airportClosedShown = false;
 
     if (!S.flying || !S.dst) {
       updateStats(0, 0);
@@ -1027,7 +1027,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 33.0.0</p>
+    <p class="ver-t">Version 34.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
