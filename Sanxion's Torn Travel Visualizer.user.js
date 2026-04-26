@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      32.0.0
+// @version      33.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -707,9 +707,12 @@ ${dots}
     // On refresh during inflight, show only inflight+ messages (not takeoff/ready)
     const startIdx = (S.flying && S.inflightLogStart !== null) ? S.inflightLogStart : 0;
     const lines = S.log.slice(startIdx).slice(-8);
-    el.log.innerHTML = lines.map((t, i) =>
-      `<div class="tl${i === lines.length-1 ? ' tln' : ''}">&rsaquo; ${t.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>`
-    ).join('');
+    el.log.innerHTML = lines.map((t, i) => {
+      // Entries prefixed with '\x01' are pre-sanitised HTML — render as-is
+      const isHtml = t.startsWith('\x01');
+      const content = isHtml ? t.slice(1) : t.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+      return `<div class="tl${i === lines.length-1 ? ' tln' : ''}">&rsaquo; ${content}</div>`;
+    }).join('');
     el.log.scrollTop = el.log.scrollHeight;
   }
 
@@ -808,7 +811,7 @@ ${dots}
           el.status.textContent = PHASE_CFG.airport_closed.label;
           el.status.style.color = PHASE_CFG.airport_closed.col;
         }
-        addLog('Airport closed — you are in a <a href="https://www.torn.com/page.php?sid=racing" target="_blank" style="color:#ff6666">race</a>.');
+        addLog('\x01Airport closed — you are in a <a href="https://www.torn.com/page.php?sid=racing" target="_blank" style="color:#ff6666;text-decoration:underline">race</a>.');
         saveS();
       }
       loopTmr = setTimeout(tick, 3000);
@@ -1024,7 +1027,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 32.0.0</p>
+    <p class="ver-t">Version 33.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
