@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      34.0.0
+// @version      35.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1027,7 +1027,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 34.0.0</p>
+    <p class="ver-t">Version 35.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1703,13 +1703,19 @@ ${dots}
   border: 1px solid #1e3d5c;
   border-radius: 8px;
   box-shadow: 0 6px 40px rgba(0,80,160,.5), inset 0 1px 0 rgba(100,180,255,.06);
-  font-family: 'Courier New', Courier, monospace;
+  font-family: 'Courier New', Courier, 'Lucida Console', monospace !important;
   font-size: 12px;
   color: #b8d4ee;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   resize: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+/* Force Courier New throughout all child elements — overrides Edge/Firefox UA monospace */
+#tcfv * {
+  font-family: 'Courier New', Courier, 'Lucida Console', monospace !important;
 }
 #tcfv-hdr {
   display: flex;
@@ -1944,6 +1950,9 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
     injectCSS();
     buildHUD();
     renderLog();
+    // Start the tick loop immediately — init() will not double-start it
+    // because startLoop() clears any existing timer before restarting
+    startLoop();
   }
 
   if (document.readyState === 'loading') {
