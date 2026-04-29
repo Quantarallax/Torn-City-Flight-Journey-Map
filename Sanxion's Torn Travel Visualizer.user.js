@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      38.0.0
+// @version      39.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -809,32 +809,29 @@ ${dots}
       : (document.body ? document.body.innerText : '');
     const raceTextPresent = pageBody.includes('You are currently in a race, you must leave or wait');
     if (raceTextPresent) {
-      // Always ensure the log contains ONLY the airport closed message —
-      // this handles both first detection AND restoring from storage with S.airportClosed=true
-      const airportMsg = '\x01Airport closed — you are in a <a href="https://www.torn.com/page.php?sid=racing" target="_blank" style="color:#ff6666;text-decoration:underline">race</a>.';
-      const logHasOnlyAirportMsg = S.log.length === 1 && S.log[0] === airportMsg;
-      if (!logHasOnlyAirportMsg) {
+      if (!S.airportClosed) {
+        // First detection — clear all commentary and show only airport closed message
         S.airportClosed = true;
         S.log = [];
         recentMessages = [];
         commentaryQueue = [];
         draining = false;
         if (el.log) el.log.innerHTML = '';
-        S.log.push(airportMsg);
+        const am = '\x01Airport closed — you are in a <a href="https://www.torn.com/page.php?sid=racing" target="_blank" style="color:#ff6666;text-decoration:underline">race</a>.';
+        S.log.push(am);
         recentMessages.push('airport closed');
-        saveS();
         renderLog();
+        saveS();
       }
+      // Always pin status display to AIRPORT CLOSED
       if (el.status) {
         el.status.textContent = PHASE_CFG.airport_closed.label;
         el.status.style.color = PHASE_CFG.airport_closed.col;
       }
-      // Do not advance flight state while airport is closed
       loopTmr = setTimeout(tick, 3000);
       return;
     }
     if (S.airportClosed) {
-      // Was closed — either in this session or on a previous refresh — show re-opened once
       S.airportClosed = false;
       addLog('Airport has re-opened.');
       saveS();
@@ -1043,7 +1040,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 38.0.0</p>
+    <p class="ver-t">Version 39.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1965,17 +1962,19 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
     initFromApi();
   }
 
-  // Fast path: always restore panel immediately at 100ms so minimise/position/page
-  // state is applied before the user sees anything. init() at 400ms wires up hooks
-  // and skips rebuilding the panel (guards with getElementById).
+  // Fast path: restore panel and log at 100ms. init() at 400ms wires hooks and starts loop.
+  // startLoop is NOT called here — init() owns the loop to avoid double-starting.
   function fastRestore() {
     loadS();
+    // If airport was closed when saved, pre-load the log with just the airport message
+    // so renderLog() shows it correctly before init() wires the tick loop
+    if (S.airportClosed) {
+      const am = '\x01Airport closed — you are in a <a href="https://www.torn.com/page.php?sid=racing" target="_blank" style="color:#ff6666;text-decoration:underline">race</a>.';
+      S.log = [am];
+    }
     injectCSS();
     buildHUD();
     renderLog();
-    // Start the tick loop immediately — init() will not double-start it
-    // because startLoop() clears any existing timer before restarting
-    startLoop();
   }
 
   if (document.readyState === 'loading') {
