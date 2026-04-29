@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      39.0.0
+// @version      40.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -794,6 +794,7 @@ ${dots}
   }
 
   let loopTmr = null;
+  let _noRaceCount = 0;
   let turbFired = false;
 
   function startLoop() {
@@ -803,12 +804,14 @@ ${dots}
 
   function tick() {
     // Airport closed check — runs regardless of flying state
-    // Use documentElement to catch dynamically-injected modals/overlays
-    const pageBody = (document.documentElement && document.documentElement.innerText)
-      ? document.documentElement.innerText
-      : (document.body ? document.body.innerText : '');
-    const raceTextPresent = pageBody.includes('You are currently in a race, you must leave or wait');
+    // Race text detection — use textContent (not innerText) to catch text in
+    // hidden/transitioning elements that Torn City's SPA may render off-screen.
+    // textContent reads ALL DOM text regardless of CSS visibility.
+    const bodyText = document.body ? (document.body.textContent || '') : '';
+    const RACE_STRING = 'You are currently in a race, you must leave or wait';
+    const raceTextPresent = bodyText.includes(RACE_STRING);
     if (raceTextPresent) {
+      _noRaceCount = 0; // reset consecutive-clear counter
       if (!S.airportClosed) {
         // First detection — clear all commentary and show only airport closed message
         S.airportClosed = true;
@@ -831,10 +834,24 @@ ${dots}
       loopTmr = setTimeout(tick, 3000);
       return;
     }
+    // Race text NOT found — require 3 consecutive clear ticks before declaring re-opened
+    // This prevents false "re-opened" from transient page states or slow SPA renders
     if (S.airportClosed) {
-      S.airportClosed = false;
-      addLog('Airport has re-opened.');
-      saveS();
+      _noRaceCount = (_noRaceCount || 0) + 1;
+      if (_noRaceCount >= 3) {
+        S.airportClosed = false;
+        _noRaceCount = 0;
+        addLog('Airport has re-opened.');
+        saveS();
+      } else {
+        // Not yet confirmed clear — keep status pinned and retry soon
+        if (el.status) {
+          el.status.textContent = PHASE_CFG.airport_closed.label;
+          el.status.style.color = PHASE_CFG.airport_closed.col;
+        }
+        loopTmr = setTimeout(tick, 2000);
+        return;
+      }
     }
 
     if (!S.flying || !S.dst) {
@@ -1040,7 +1057,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 39.0.0</p>
+    <p class="ver-t">Version 40.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1587,6 +1604,15 @@ ${dots}
     const obs = new MutationObserver(() => {
       clearTimeout(db);
       db = setTimeout(() => {
+        // Check for airport closed text immediately on any DOM change
+        if (!S.airportClosed && document.body &&
+            document.body.textContent.includes('You are currently in a race, you must leave or wait')) {
+          // Kick the tick loop immediately to handle airport closed
+          if (loopTmr) clearTimeout(loopTmr);
+          tick();
+          return;
+        }
+
         // Check for ticket type changes
         const tk = readSelectedTicket();
         if (tk && tk !== S.ticket) {
