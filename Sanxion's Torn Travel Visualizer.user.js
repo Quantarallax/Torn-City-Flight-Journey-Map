@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      42.0.0
+// @version      43.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -815,28 +815,28 @@ ${dots}
       _noRaceCount = 0;
       if (!S.airportClosed) {
         S.airportClosed = true;
-        // Append airport message — keep existing commentary visible
+        // Append airport message — keep existing commentary visible.
+        // No S.log.includes() check here — the outer !S.airportClosed gate ensures
+        // this block only runs once per closure event, enabling repeated open→close cycles.
         commentaryQueue = [];
         draining = false;
         const am = '\x01Airport closed — you are in a <a href="https://www.torn.com/page.php?sid=racing" target="_blank" style="color:#ff6666;text-decoration:underline">race</a>.';
-        if (!S.log.includes(am)) {
-          S.log.push(am);
-          recentMessages.push('airport closed');
-          renderLog();
-        }
+        S.log.push(am);
+        recentMessages.push('airport closed');
+        renderLog();
         saveS();
       }
       if (el.status) {
         el.status.textContent = PHASE_CFG.airport_closed.label;
         el.status.style.color = PHASE_CFG.airport_closed.col;
       }
-      loopTmr = setTimeout(tick, 1500);
+      loopTmr = setTimeout(tick, 1000);
       return;
     }
-    // Race text NOT found — 2 consecutive clear ticks before declaring re-opened
+    // Race text NOT found — 1 consecutive clear tick before declaring re-opened
     if (S.airportClosed) {
       _noRaceCount = (_noRaceCount || 0) + 1;
-      if (_noRaceCount >= 2) {
+      if (_noRaceCount >= 1) {
         S.airportClosed = false;
         _noRaceCount = 0;
         addLog('Airport has re-opened.');
@@ -846,7 +846,7 @@ ${dots}
           el.status.textContent = PHASE_CFG.airport_closed.label;
           el.status.style.color = PHASE_CFG.airport_closed.col;
         }
-        loopTmr = setTimeout(tick, 1500);
+        loopTmr = setTimeout(tick, 1000);
         return;
       }
     }
@@ -1054,7 +1054,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 42.0.0</p>
+    <p class="ver-t">Version 43.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
