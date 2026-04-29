@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      36.0.0
+// @version      37.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -811,6 +811,12 @@ ${dots}
     if (raceTextPresent) {
       if (!S.airportClosed) {
         S.airportClosed = true;
+        // Clear any in-progress commentary — only show the airport closed message
+        S.log = [];
+        recentMessages = [];
+        commentaryQueue = [];
+        draining = false;
+        if (el.log) el.log.innerHTML = '';
         if (el.status) {
           el.status.textContent = PHASE_CFG.airport_closed.label;
           el.status.style.color = PHASE_CFG.airport_closed.col;
@@ -818,7 +824,7 @@ ${dots}
         addLog('\x01Airport closed — you are in a <a href="https://www.torn.com/page.php?sid=racing" target="_blank" style="color:#ff6666;text-decoration:underline">race</a>.');
         saveS();
       } else if (el.status) {
-        // Keep status updated on every tick while airport is closed
+        // Keep status pinned to AIRPORT CLOSED on every tick
         el.status.textContent = PHASE_CFG.airport_closed.label;
         el.status.style.color = PHASE_CFG.airport_closed.col;
       }
@@ -1036,7 +1042,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 36.0.0</p>
+    <p class="ver-t">Version 37.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
