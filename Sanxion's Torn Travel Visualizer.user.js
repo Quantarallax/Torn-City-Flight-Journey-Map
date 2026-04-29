@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      37.0.0
+// @version      38.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -809,22 +809,23 @@ ${dots}
       : (document.body ? document.body.innerText : '');
     const raceTextPresent = pageBody.includes('You are currently in a race, you must leave or wait');
     if (raceTextPresent) {
-      if (!S.airportClosed) {
+      // Always ensure the log contains ONLY the airport closed message —
+      // this handles both first detection AND restoring from storage with S.airportClosed=true
+      const airportMsg = '\x01Airport closed — you are in a <a href="https://www.torn.com/page.php?sid=racing" target="_blank" style="color:#ff6666;text-decoration:underline">race</a>.';
+      const logHasOnlyAirportMsg = S.log.length === 1 && S.log[0] === airportMsg;
+      if (!logHasOnlyAirportMsg) {
         S.airportClosed = true;
-        // Clear any in-progress commentary — only show the airport closed message
         S.log = [];
         recentMessages = [];
         commentaryQueue = [];
         draining = false;
         if (el.log) el.log.innerHTML = '';
-        if (el.status) {
-          el.status.textContent = PHASE_CFG.airport_closed.label;
-          el.status.style.color = PHASE_CFG.airport_closed.col;
-        }
-        addLog('\x01Airport closed — you are in a <a href="https://www.torn.com/page.php?sid=racing" target="_blank" style="color:#ff6666;text-decoration:underline">race</a>.');
+        S.log.push(airportMsg);
+        recentMessages.push('airport closed');
         saveS();
-      } else if (el.status) {
-        // Keep status pinned to AIRPORT CLOSED on every tick
+        renderLog();
+      }
+      if (el.status) {
         el.status.textContent = PHASE_CFG.airport_closed.label;
         el.status.style.color = PHASE_CFG.airport_closed.col;
       }
@@ -1042,7 +1043,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 37.0.0</p>
+    <p class="ver-t">Version 38.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1191,14 +1192,14 @@ ${dots}
       { id:'pressure', name:'Cabin Pressure', detail:'8.0 psi differential', x:140, y:80 },
       { id:'engines', name:'Engines (x4)', detail:'CFM56-7B thrust nominal', x:38, y:118 },
       { id:'wings', name:'Wings', detail:'Control surfaces nominal', x:252, y:108 },
-      { id:'gear', name:'Flight Gear', detail:'Gear retracted', x:140, y:143 },
+      { id:'gear', name:'Flight Gear', detail:'Gear deployed', x:140, y:143 },
       { id:'tail', name:'Tail Wing', detail:'Stabilisers nominal', x:140, y:178 },
     ];
     const smallSystems = [
       { id:'electrical', name:'Electrical Systems', detail:'Battery & alternator OK', x:140, y:68 },
       { id:'engine', name:'Engine', detail:'Lycoming O-360 nominal', x:140, y:22 },
       { id:'wings', name:'Wings', detail:'Control surfaces nominal', x:28, y:96 },
-      { id:'gear', name:'Flight Gear', detail:'Gear retracted', x:140, y:128 },
+      { id:'gear', name:'Flight Gear', detail:'Gear deployed', x:140, y:128 },
       { id:'tail', name:'Tail Wing', detail:'Stabiliser nominal', x:140, y:162 },
     ];
     const systems = (isSmall ? smallSystems : largeSystems).map(s => ({ ...s, status: rnd() }));
@@ -1282,11 +1283,17 @@ ${dots}
     if (!inner) return;
     if (!S.diagnostics) S.diagnostics = generateDiagnostics();
     const d = S.diagnostics;
-    // Update flight gear status based on flight phase
+    // Update flight gear status and detail based on flight phase
     const gearSys = d.systems.find(s => s.id === 'gear');
     if (gearSys) {
       const phase = S.flying ? (S.arrTime && (S.arrTime - Date.now() < 120000) ? 'landing' : 'flying') : 'ground';
-      if (phase === 'ground' || phase === 'landing') gearSys.status = 'green';
+      if (phase === 'ground' || phase === 'landing') {
+        gearSys.status = 'green';
+        gearSys.detail = 'Gear deployed';
+      } else {
+        // Airborne — gear retracted (keep the random status from generation)
+        gearSys.detail = 'Gear retracted';
+      }
     }
     const schematic = d.isSmall ? diagSVGSmall(d.systems) : diagSVGLarge(d.systems);
     const acType = d.isSmall ? 'PRIVATE PLANE' : 'JUMBO JET';
