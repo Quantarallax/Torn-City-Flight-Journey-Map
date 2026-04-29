@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      35.0.0
+// @version      36.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -803,8 +803,12 @@ ${dots}
 
   function tick() {
     // Airport closed check — runs regardless of flying state
-    const pageBody = document.body ? document.body.innerText : '';
-    if (pageBody.includes('You are currently in a race, you must leave or wait')) {
+    // Use documentElement to catch dynamically-injected modals/overlays
+    const pageBody = (document.documentElement && document.documentElement.innerText)
+      ? document.documentElement.innerText
+      : (document.body ? document.body.innerText : '');
+    const raceTextPresent = pageBody.includes('You are currently in a race, you must leave or wait');
+    if (raceTextPresent) {
       if (!S.airportClosed) {
         S.airportClosed = true;
         if (el.status) {
@@ -813,7 +817,12 @@ ${dots}
         }
         addLog('\x01Airport closed — you are in a <a href="https://www.torn.com/page.php?sid=racing" target="_blank" style="color:#ff6666;text-decoration:underline">race</a>.');
         saveS();
+      } else if (el.status) {
+        // Keep status updated on every tick while airport is closed
+        el.status.textContent = PHASE_CFG.airport_closed.label;
+        el.status.style.color = PHASE_CFG.airport_closed.col;
       }
+      // Do not advance flight state while airport is closed
       loopTmr = setTimeout(tick, 3000);
       return;
     }
@@ -1027,7 +1036,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 35.0.0</p>
+    <p class="ver-t">Version 36.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1365,6 +1374,7 @@ ${dots}
       if (e.target.closest('button')) return;
       drag = true; ox = e.clientX - panel.offsetLeft; oy = e.clientY - panel.offsetTop;
       e.preventDefault();
+      e.stopPropagation(); // prevent Torn City map elements from receiving this event
     });
     document.addEventListener('mousemove', e => {
       if (!drag) return;
