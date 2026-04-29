@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      41.0.0
+// @version      42.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -697,7 +697,8 @@ ${dots}
   let phRunId = {};
 
   function addLog(text) {
-    // While airport is closed, block all commentary except the airport message itself
+    // While airport is closed, only allow airport-related messages
+    // This blocks stale setTimeout callbacks from in-progress phase commentary
     if (S.airportClosed && !text.includes('Airport')) return;
     S.log.push(text);
     if (S.log.length > 30) S.log.shift();
@@ -806,52 +807,46 @@ ${dots}
 
   function tick() {
     // Airport closed check — runs regardless of flying state
-    // Race text detection — use textContent (not innerText) to catch text in
-    // hidden/transitioning elements that Torn City's SPA may render off-screen.
-    // textContent reads ALL DOM text regardless of CSS visibility.
+    // Use textContent (not innerText) — catches text in hidden/transitioning SPA elements
     const bodyText = document.body ? (document.body.textContent || '') : '';
     const RACE_STRING = 'You are currently in a race, you must leave or wait';
     const raceTextPresent = bodyText.includes(RACE_STRING);
     if (raceTextPresent) {
-      _noRaceCount = 0; // reset consecutive-clear counter
+      _noRaceCount = 0;
       if (!S.airportClosed) {
-        // First detection — clear all commentary and show only airport closed message
         S.airportClosed = true;
-        S.log = [];
-        recentMessages = [];
+        // Append airport message — keep existing commentary visible
         commentaryQueue = [];
         draining = false;
-        if (el.log) el.log.innerHTML = '';
         const am = '\x01Airport closed — you are in a <a href="https://www.torn.com/page.php?sid=racing" target="_blank" style="color:#ff6666;text-decoration:underline">race</a>.';
-        S.log.push(am);
-        recentMessages.push('airport closed');
-        renderLog();
+        if (!S.log.includes(am)) {
+          S.log.push(am);
+          recentMessages.push('airport closed');
+          renderLog();
+        }
         saveS();
       }
-      // Always pin status display to AIRPORT CLOSED
       if (el.status) {
         el.status.textContent = PHASE_CFG.airport_closed.label;
         el.status.style.color = PHASE_CFG.airport_closed.col;
       }
-      loopTmr = setTimeout(tick, 3000);
+      loopTmr = setTimeout(tick, 1500);
       return;
     }
-    // Race text NOT found — require 3 consecutive clear ticks before declaring re-opened
-    // This prevents false "re-opened" from transient page states or slow SPA renders
+    // Race text NOT found — 2 consecutive clear ticks before declaring re-opened
     if (S.airportClosed) {
       _noRaceCount = (_noRaceCount || 0) + 1;
-      if (_noRaceCount >= 3) {
+      if (_noRaceCount >= 2) {
         S.airportClosed = false;
         _noRaceCount = 0;
         addLog('Airport has re-opened.');
         saveS();
       } else {
-        // Not yet confirmed clear — keep status pinned and retry soon
         if (el.status) {
           el.status.textContent = PHASE_CFG.airport_closed.label;
           el.status.style.color = PHASE_CFG.airport_closed.col;
         }
-        loopTmr = setTimeout(tick, 2000);
+        loopTmr = setTimeout(tick, 1500);
         return;
       }
     }
@@ -1059,7 +1054,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 41.0.0</p>
+    <p class="ver-t">Version 42.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
