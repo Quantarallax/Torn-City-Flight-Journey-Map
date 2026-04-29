@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      40.0.0
+// @version      41.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -697,6 +697,8 @@ ${dots}
   let phRunId = {};
 
   function addLog(text) {
+    // While airport is closed, block all commentary except the airport message itself
+    if (S.airportClosed && !text.includes('Airport')) return;
     S.log.push(text);
     if (S.log.length > 30) S.log.shift();
     renderLog();
@@ -1057,7 +1059,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 40.0.0</p>
+    <p class="ver-t">Version 41.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
