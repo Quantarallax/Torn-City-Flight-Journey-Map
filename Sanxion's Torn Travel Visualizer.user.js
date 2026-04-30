@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      44.0.0
+// @version      45.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -79,6 +79,7 @@
     landing: { label:'LANDING', col:'#ff8844' },
     arrived: { label:'LANDED', col:'#44ff88' },
     airport_closed: { label:'AIRPORT CLOSED', col:'#ff3333' },
+    inaccessible: { label:'AIRPORT INACCESSIBLE', col:'#ff6600' },
   };
 
   const WEATHER = ['clear skies','partly cloudy','overcast','light rain','warm and humid','cool and breezy','sunny with light winds','scattered showers'];
@@ -223,7 +224,7 @@
     ticket:'standard', player:'Pilot', flying:false, isReturn:false,
     prevPhase:'', phasesTriggered:{}, turbTriggered:false, halfwayFired:false,
     log:[], px:20, py:60, pw:680, ph_panel:520, min:false, page:'main', apiKey:'',
-    previewDst:null, inflightSchedule:null, planeScale:100, inflightLogStart:null, diagnostics:null, airportClosed:false,
+    previewDst:null, inflightSchedule:null, planeScale:100, inflightLogStart:null, diagnostics:null, airportClosed:false, inHospital:false,
   };
 
   const saveS = () => {
@@ -233,7 +234,7 @@
         ticket:S.ticket, player:S.player, flying:S.flying, isReturn:S.isReturn,
         prevPhase:S.prevPhase, phasesTriggered:S.phasesTriggered, turbTriggered:S.turbTriggered, halfwayFired:S.halfwayFired,
         log:S.log.slice(-30), px:S.px, py:S.py, pw:S.pw, ph_panel:S.ph_panel,
-        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale, inflightLogStart:S.inflightLogStart, diagnostics:S.diagnostics, airportClosed:S.airportClosed,
+        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale, inflightLogStart:S.inflightLogStart, diagnostics:S.diagnostics, airportClosed:S.airportClosed, inHospital:S.inHospital,
       }));
     } catch(e) {}
   };
@@ -697,9 +698,8 @@ ${dots}
   let phRunId = {};
 
   function addLog(text) {
-    // While airport is closed, only allow airport-related messages
-    // This blocks stale setTimeout callbacks from in-progress phase commentary
-    if (S.airportClosed && !text.includes('Airport')) return;
+    // While airport is closed or in hospital, only allow status-related messages through
+    if ((S.airportClosed || S.inHospital) && !text.includes('Airport') && !text.includes('hospital') && !text.includes('discharged')) return;
     S.log.push(text);
     if (S.log.length > 30) S.log.shift();
     renderLog();
@@ -809,6 +809,31 @@ ${dots}
   }
 
   function tick() {
+    // Hospital check — show AIRPORT INACCESSIBLE if player is in hospital
+    const HOSP_STRING = 'This page is not available while in hospital';
+    const inHospitalNow = bodyText.includes(HOSP_STRING);
+    if (inHospitalNow) {
+      if (!S.inHospital) {
+        S.inHospital = true;
+        const hm = '\x01You are in <a href="https://www.torn.com/hospitalview.php" target="_blank" style="color:#ff9944;text-decoration:underline">hospital</a>, recuperating.';
+        S.log.push(hm);
+        recentMessages.push('in hospital');
+        renderLog();
+        saveS();
+      }
+      if (el.status) {
+        el.status.textContent = PHASE_CFG.inaccessible.label;
+        el.status.style.color = PHASE_CFG.inaccessible.col;
+      }
+      loopTmr = setTimeout(tick, 1000);
+      return;
+    }
+    if (S.inHospital) {
+      S.inHospital = false;
+      addLog('You have been discharged from hospital.');
+      saveS();
+    }
+
     // Airport closed check — runs regardless of flying state
     // Use textContent (not innerText) — catches text in hidden/transitioning SPA elements
     const bodyText = document.body ? (document.body.textContent || '') : '';
@@ -1057,7 +1082,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 44.0.0</p>
+    <p class="ver-t">Version 45.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
