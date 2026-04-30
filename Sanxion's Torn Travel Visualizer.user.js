@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      45.0.0
+// @version      46.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -79,7 +79,7 @@
     landing: { label:'LANDING', col:'#ff8844' },
     arrived: { label:'LANDED', col:'#44ff88' },
     airport_closed: { label:'AIRPORT CLOSED', col:'#ff3333' },
-    inaccessible: { label:'AIRPORT INACCESSIBLE', col:'#ff6600' },
+    inaccessible: { label:'NO FLYING ALLOWED', col:'#ff6600' },
   };
 
   const WEATHER = ['clear skies','partly cloudy','overcast','light rain','warm and humid','cool and breezy','sunny with light winds','scattered showers'];
@@ -809,7 +809,10 @@ ${dots}
   }
 
   function tick() {
-    // Hospital check — show AIRPORT INACCESSIBLE if player is in hospital
+    // Read full page text once — used by both hospital and race checks
+    const bodyText = document.body ? (document.body.textContent || '') : '';
+
+    // Hospital check — show NO FLYING ALLOWED if player is in hospital
     const HOSP_STRING = 'This page is not available while in hospital';
     const inHospitalNow = bodyText.includes(HOSP_STRING);
     if (inHospitalNow) {
@@ -836,7 +839,6 @@ ${dots}
 
     // Airport closed check — runs regardless of flying state
     // Use textContent (not innerText) — catches text in hidden/transitioning SPA elements
-    const bodyText = document.body ? (document.body.textContent || '') : '';
     const RACE_STRING = 'You are currently in a race, you must leave or wait';
     const raceTextPresent = bodyText.includes(RACE_STRING);
     if (raceTextPresent) {
@@ -1082,7 +1084,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 45.0.0</p>
+    <p class="ver-t">Version 46.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
