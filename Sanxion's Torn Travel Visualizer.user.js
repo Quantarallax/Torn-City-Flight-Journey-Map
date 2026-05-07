@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      47.0.0
+// @version      48.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -85,6 +85,7 @@
 
   const WEATHER = ['clear skies','partly cloudy','overcast','light rain','warm and humid','cool and breezy','sunny with light winds','scattered showers'];
   const rndW = () => WEATHER[Math.floor(Math.random() * WEATHER.length)];
+  const rndFlightNum = () => 'TC' + (Math.floor(Math.random() * 9000) + 1000);
 
   /* ─────────────────────────────────────────────────────────────
      COMMENTARY  (keyed by phase; each fn(params)->string)
@@ -133,6 +134,7 @@
     () => 'ATC stand by, unsure of error reason.',
     p => `${p.name} does a loop the loop, here we go!`,
     () => 'A jet flies past — turbulence rocks the plane.',
+    () => `ATC, this is flight ${rndFlightNum()}, autopilot engaged.`,
   ];
 
   // Helper — returns the right commentary array based on plane size
@@ -151,6 +153,7 @@
     ],
     takeoff_large: [
       () => 'Cabin crew, cross-check ready for departure.',
+      p => `Welcome to your flight to ${p.dst}. Extinguish all doobies and put seats in upright position.`,
       () => 'The airplane picks up speed.',
       () => 'The airplane leaves the ground.',
       () => 'Sit back and relax.',
@@ -498,6 +501,7 @@ ${dots}
 
   let dashAnimId = null;
   let dashOffset = 0;
+  let currentZoom = 1; // ratio: viewBox width / MAP_W — >1 = zoomed in
 
   function startDashAnim() {
     if (dashAnimId) cancelAnimationFrame(dashAnimId);
@@ -552,8 +556,8 @@ ${dots}
     const { d } = buildBez(sk, dk);
     // Initially draw full path as dashes (progress=0). updatePathProgress() splits it when flying.
     g.innerHTML = `
-<polyline id="tcfv-route-trail" points="${pts[0]}" fill="none" stroke="${col}" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
-<polyline id="tcfv-route-ahead" points="${pts.join(' ')}" fill="none" stroke="${col}" stroke-width="2" stroke-dasharray="12,8" stroke-linecap="round" opacity="0.55"/>
+<polyline id="tcfv-route-trail" points="${pts[0]}" fill="none" stroke="${col}" stroke-width="${(2.2/currentZoom).toFixed(3)}" stroke-linecap="round" opacity="0.85"/>
+<polyline id="tcfv-route-ahead" points="${pts.join(' ')}" fill="none" stroke="${col}" stroke-width="${(2/currentZoom).toFixed(3)}" stroke-dasharray="${(12/currentZoom).toFixed(1)},${(8/currentZoom).toFixed(1)}" stroke-linecap="round" opacity="0.55"/>
 <circle cx="${s.x.toFixed(1)}" cy="${s.y.toFixed(1)}" r="5" fill="${DESTS[sk]?.col||'#fff'}" opacity="0.9" filter="url(#gl)"/>
 <circle cx="${d.x.toFixed(1)}" cy="${d.y.toFixed(1)}" r="5" fill="${DESTS[dk]?.col||'#fff'}" opacity="0.9" filter="url(#gl)"/>`;
     startDashAnim();
@@ -565,6 +569,10 @@ ${dots}
     const trail = document.getElementById('tcfv-route-trail');
     const ahead = document.getElementById('tcfv-route-ahead');
     if (!trail || !ahead) return;
+    // Keep stroke-widths zoom-compensated so line appears same visual width
+    trail.setAttribute('stroke-width', (2.2 / currentZoom).toFixed(3));
+    ahead.setAttribute('stroke-width', (2 / currentZoom).toFixed(3));
+    ahead.setAttribute('stroke-dasharray', `${(12/currentZoom).toFixed(1)},${(8/currentZoom).toFixed(1)}`);
     const pts = getPathPts(sk, dk);
     const N = pts.length - 1;
     // Split index based on progress
@@ -586,7 +594,8 @@ ${dots}
     const t = Math.max(0.001, Math.min(0.999, progress));
     const pos = bPt(t, s, c, d), ang = bAng(t, s, c, d);
     const plane = TICKETS[S.ticket]?.plane || 'jumbo';
-    const scale = (S.planeScale || 100) / 100;
+    // Divide scale by currentZoom so plane shrinks proportionally when map is zoomed in
+    const scale = ((S.planeScale || 100) / 100) / currentZoom;
 
     // Top-down airplane silhouette — white fill, black stroke, transparent background
     // Sized to be smaller than the destination dots (dot-core r=3.5, dot-ring r=5.5)
@@ -1085,7 +1094,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 47.0.0</p>
+    <p class="ver-t">Version 48.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1467,7 +1476,11 @@ ${dots}
     S.previewDst = dstK;
     drawPath(S.src, dstK);
     // Zoom map to frame the route
-    if (el.svg) el.svg.setAttribute('viewBox', getZoomedViewBox(S.src, dstK));
+    if (el.svg) {
+      const vb = getZoomedViewBox(S.src, dstK);
+      el.svg.setAttribute('viewBox', vb);
+      currentZoom = MAP_W / parseFloat(vb.split(' ')[2]);
+    }
     highlightDots(S.src, dstK);
     updateStats(0, 0);
     saveS();
@@ -1692,7 +1705,11 @@ ${dots}
     S.previewDst = null;
     saveS();
     drawPath(sk, dk);
-    if (el.svg) el.svg.setAttribute('viewBox', getZoomedViewBox(sk, dk));
+    if (el.svg) {
+      const vb = getZoomedViewBox(sk, dk);
+      el.svg.setAttribute('viewBox', vb);
+      currentZoom = MAP_W / parseFloat(vb.split(' ')[2]);
+    }
     highlightDots(sk, dk);
     if (isReturn) {
       const p = {
@@ -2002,12 +2019,12 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
         S.phasesTriggered = {}; saveS();
       } else {
         drawPath(S.src, S.dst);
-        if (el.svg) el.svg.setAttribute('viewBox', getZoomedViewBox(S.src, S.dst));
+        if (el.svg) { const vb=getZoomedViewBox(S.src,S.dst); el.svg.setAttribute('viewBox',vb); currentZoom=MAP_W/parseFloat(vb.split(' ')[2]); }
         highlightDots(S.src, S.dst);
       }
     } else if (S.previewDst) {
       drawPath(S.src, S.previewDst);
-      if (el.svg) el.svg.setAttribute('viewBox', getZoomedViewBox(S.src, S.previewDst));
+      if (el.svg) { const vb=getZoomedViewBox(S.src,S.previewDst); el.svg.setAttribute('viewBox',vb); currentZoom=MAP_W/parseFloat(vb.split(' ')[2]); }
       highlightDots(S.src, S.previewDst);
     }
 
