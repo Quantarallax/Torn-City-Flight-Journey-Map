@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      55.0.0
+// @version      57.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1093,17 +1093,18 @@ ${dots}
         <th style="text-align:left;padding:2px 4px">Permission needed</th>
         <th style="text-align:left;padding:2px 4px">Key level</th>
       </tr>
-      <tr style="color:#b8d4ee">
-        <td style="padding:2px 4px">Flight detection &amp; player name</td>
-        <td style="padding:2px 4px">User: travel, basic (v1 API)</td>
-        <td style="padding:2px 4px;color:#44ff88">Minimal</td>
+      <tr>
+        <td style="padding:2px 4px;color:#b8d4ee">Flight detection &amp; player name</td>
+        <td style="padding:2px 4px;color:#8eb8e0">user/travel, user/basic</td>
+        <td style="padding:2px 4px;color:#44ff88">Minimal key</td>
       </tr>
-      <tr style="color:#b8d4ee">
-        <td style="padding:2px 4px">Faction Flights (F button)</td>
-        <td style="padding:2px 4px">Faction: travel, members (v1 API)</td>
-        <td style="padding:2px 4px;color:#ffcc44">Limited</td>
+      <tr>
+        <td style="padding:2px 4px;color:#b8d4ee">Faction Flights (F button)</td>
+        <td style="padding:2px 4px;color:#8eb8e0">faction/members (with status)</td>
+        <td style="padding:2px 4px;color:#ffcc44">Limited key + Faction section ticked</td>
       </tr>
     </table>
+    <p style="color:#8eb8e0;font-size:10px;margin:4px 0 8px">&#9432; For faction flights: set key level to <strong style="color:#ffcc44">Limited</strong> (or higher) AND tick the <strong style="color:#ffcc44">Faction</strong> section checkbox. Both are required.</p>
     <label for="tcfv-api-inp" style="color:#b8d4ee">API Key</label><br>
     <input id="tcfv-api-inp" type="password" placeholder="Paste your Torn API key here" autocomplete="off" spellcheck="false">
     <br><br>
@@ -1117,7 +1118,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 55.0.0</p>
+    <p class="ver-t">Version 57.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1493,93 +1494,61 @@ ${dots}
 
   function fetchFactionFlights() {
     if (!S.apiKey || !factionFlightsOn) return;
-    // Fetch travel + members in one call for full roster
+    // faction/travel does NOT exist in Torn API v1.
+    // Member travel status is in faction/members via member.status.state + member.status.until.
     GM_xmlhttpRequest({
       method: 'GET',
-      url: `https://api.torn.com/faction/?selections=travel&key=${S.apiKey}`,
+      url: `https://api.torn.com/faction/?selections=members&key=${S.apiKey}`,
       onload: r => {
-        console.log('[TCFV] Faction travel API response:', r.responseText.substring(0, 200));
+        console.log('[TCFV] Faction members API response:', r.responseText.substring(0, 200));
         try {
           const data = JSON.parse(r.responseText);
           if (data.error) {
+            const ferr = typeof data.error === 'object' ? data.error.error : data.error;
+            console.error('[TCFV] Faction members API error:', ferr);
             if (el.log && factionFlightsOn) {
-              const ferr = typeof data.error === 'object' ? data.error.error : data.error;
-              console.error('[TCFV] Faction travel API error:', ferr);
-              el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API error — check api key: ' + ferr + '. A <strong>Limited</strong> access key is required for faction data (Torn &rarr; Preferences &rarr; API Keys).</div>';
+              el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API error — check api key: ' + ferr + '. In Torn &rarr; Preferences &rarr; API Keys: tick the <strong>Faction</strong> section and set level to <strong>Limited</strong> or higher.</div>';
             }
             return;
           }
-          // Parse travelling members first (this call is travel-only)
-          factionAllMembers = {}; // will be populated by second call below
-          // The travel object may have: destination (country name), departed, timestamp, method, name
-          const travel = data.travel || {};
+          const members = data.members || {};
+          factionAllMembers = {};
           factionData = {};
-          for (const [id, m] of Object.entries(travel)) {
-            // Support both {destination, departed, timestamp} and nested formats
-            const dest = m.destination || m.travel?.destination;
-            const dep = m.departed || m.travel?.departed;
-            const arr = m.timestamp || m.travel?.timestamp;
-            const method = m.method || m.travel?.method || 'Standard';
-            const name = m.name || factionAllMembers[id]?.name || ('ID' + id);
-            if (!dest || !dep || !arr) continue;
-            if (Date.now() > arr * 1000) continue; // already landed
-            const dk = matchDest(dest);
+          for (const [id, m] of Object.entries(members)) {
+            factionAllMembers[id] = { id, name: m.name || ('ID' + id) };
+            const st = m.status;
+            if (!st) continue;
+            if (st.state !== 'Traveling' && st.state !== 'Travelling') continue;
+            // description e.g. "Traveling from Torn to United Arab Emirates"
+            const desc = st.description || '';
+            const toMatch = desc.match(/to (.+)$/i);
+            if (!toMatch) continue;
+            const destText = toMatch[1].trim();
+            const dk = matchDest(destText);
             if (!dk) continue;
-            const src = (dk === 'torn') ? 'caymans' : 'torn'; // all flights originate/return to Torn
-            factionData[id] = { name, src, dst: dk, depTime: dep * 1000, arrTime: arr * 1000, method };
-          }
-          // If no travel data but members have travelling status, try members.status
-          if (Object.keys(factionData).length === 0 && Object.keys(members).length > 0) {
-            for (const [id, m] of Object.entries(members)) {
-              const st = m.status;
-              if (!st || st.state !== 'Travelling') continue;
-              const dest = st.details?.replace(/^Travelling to /i, '') || '';
-              const arrTs = st.until;
-              if (!dest || !arrTs) continue;
-              const dk = matchDest(dest);
-              if (!dk) continue;
-              // Approximate departure from current time and until
-              const depTs = Math.floor(Date.now() / 1000) - 3600; // rough est
-              const src = (dk === 'torn') ? 'caymans' : 'torn';
-              factionData[id] = {
-                name: m.name || ('ID' + id),
-                src, dst: dk,
-                depTime: depTs * 1000,
-                arrTime: arrTs * 1000,
-                method: 'Standard',
-              };
-            }
+            const arrTime = (st.until || 0) * 1000;
+            if (arrTime && Date.now() > arrTime) continue;
+            const src = (dk === 'torn') ? 'caymans' : 'torn';
+            const routeKey = (dk === 'torn') ? ('caymans_torn') : ('torn_' + dk);
+            const dur = BASE_DUR[routeKey] || BASE_DUR['torn_' + dk] || 18000000;
+            const depTime = arrTime ? (arrTime - dur) : (Date.now() - dur / 2);
+            const method = (m.travel && m.travel.method) ? m.travel.method : 'Standard';
+            console.log('[TCFV] Faction member traveling:', m.name, '->', dk, 'arr', new Date(arrTime).toISOString());
+            factionData[id] = { name: m.name || ('ID' + id), src, dst: dk, depTime, arrTime, method };
           }
           drawFactionFlights();
-          renderFactionRoster(); // renders with available data first
-          // Second call: fetch all members for the full roster
-          GM_xmlhttpRequest({
-            method: 'GET',
-            url: `https://api.torn.com/faction/?selections=members&key=${S.apiKey}`,
-            onload: r2 => {
-              try {
-                const d2 = JSON.parse(r2.responseText);
-                if (!d2.error) {
-                  factionAllMembers = {};
-                  for (const [id, m] of Object.entries(d2.members || {})) {
-                    factionAllMembers[id] = { id, name: m.name || ('ID' + id) };
-                  }
-                  renderFactionRoster(); // re-render with full roster
-                }
-              } catch(e2) {}
-            },
-          });
+          renderFactionRoster();
         } catch(e) {
+          console.error('[TCFV] Faction API parse error:', String(e));
           if (el.log && factionFlightsOn) {
-            console.error('[TCFV] Faction API parse error');
-            el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API parse error — check api key. A <strong>Limited</strong> access key is required.</div>';
+            el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API parse error — check api key.</div>';
           }
         }
       },
       onerror: () => {
+        console.error('[TCFV] Faction API request failed');
         if (el.log && factionFlightsOn) {
-          console.error('[TCFV] Faction API request failed');
-          el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API request failed — check api key and network connection.</div>';
+          el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API request failed — check network.</div>';
         }
       },
     });
@@ -2046,18 +2015,19 @@ ${dots}
         // Step 2: test faction access
         GM_xmlhttpRequest({
           method: 'GET',
-          url: `https://api.torn.com/faction/?selections=basic&key=${key}`,
+          url: `https://api.torn.com/faction/?selections=members&key=${key}`,
           onload: r2 => {
-            console.log('[TCFV] Test faction API response:', r2.responseText.substring(0, 200));
+            console.log('[TCFV] Test faction/travel API response:', r2.responseText.substring(0, 200));
             try {
               const d2 = JSON.parse(r2.responseText);
               if (d2.error) {
                 const fe = typeof d2.error === 'object' ? d2.error.error : d2.error;
-                console.warn('[TCFV] Test faction error:', fe);
-                html += `<span style="color:#fa4">&#10007; Faction data: ${fe} — a <strong>Limited</strong> access key is required for faction data</span>`;
+                console.warn('[TCFV] Test faction/travel error:', fe);
+                html += `<span style="color:#fa4">&#10007; Faction data: ${fe} — check api key: tick Faction section in key settings (Limited or higher)</span>`;
               } else {
-                const fn = d2.name || 'your faction';
-                html += `<span style="color:#4f8">&#10003; Faction data: accessible (${fn})</span>`;
+                const mems = Object.values(d2.members || {});
+                const flying2 = mems.filter(function(mx){ return mx.status && (mx.status.state === 'Traveling' || mx.status.state === 'Travelling'); }).length;
+                html += '<span style="color:#4f8">&#10003; Faction data: accessible (' + mems.length + ' members, ' + flying2 + ' currently travelling)</span>';
               }
             } catch(e) {
               html += `<span style="color:#fa4">&#10007; Faction data: parse error</span>`;
