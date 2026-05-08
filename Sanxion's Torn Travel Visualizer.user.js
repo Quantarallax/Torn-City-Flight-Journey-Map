@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.0.0
+// @version      70.1.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -931,16 +931,11 @@ ${dots}
     };
 
     // Phase transition commentary (fires only once per phase)
-    // Note: 'landing' phase commentary is handled separately via landing_screech at 60s mark
-    // Note: 'inflight' phase is handled by the random scheduler below
-    // Note: 'arrived' phase is handled manually below to ensure messages are saved before state resets
     if (phase !== S.prevPhase) {
       S.prevPhase = phase;
       if (phase !== 'landing' && phase !== 'inflight' && phase !== 'arrived') triggerComm(phase, params);
       if (phase === 'inflight') {
-        // Mark as triggered so triggerComm won't double-fire, build schedule
         S.phasesTriggered.inflight = true;
-        // Record log index so refresh only shows inflight messages, not takeoff
         if (S.inflightLogStart === null) {
           S.inflightLogStart = S.log.length;
           saveS();
@@ -949,17 +944,14 @@ ${dots}
       }
 
       if (phase === 'arrived') {
-        // Handle arrived manually: log all messages with staggered delays,
-        // then reset state ONLY after the last message has been logged and saved.
         S.phasesTriggered.arrived = true;
         const arrivedFns = COMMENTARY.arrived;
-        const capturedParams = Object.assign({}, params); // snapshot before any state change
+        const capturedParams = Object.assign({}, params);
         arrivedFns.forEach((fn, i) => {
           setTimeout(() => {
             const msg = fn(capturedParams);
             if (msg) addLog(msg);
             if (i === arrivedFns.length - 1) {
-              // All arrived messages are now in the log — safe to reset and save
               const newSrc = S.dst;
               S.flying = false;
               S.src = newSrc;
@@ -975,7 +967,6 @@ ${dots}
             }
           }, i * 3800);
         });
-        // Keep ticking slowly until state has fully reset
         loopTmr = setTimeout(tick, arrivedFns.length * 3800 + 2500);
         return;
       }
@@ -1001,7 +992,7 @@ ${dots}
       if (scheduleChanged) saveS();
     }
 
-    // Halfway message — fires once at 50% progress during inflight, branched by plane size
+    // Halfway message
     if (!S.halfwayFired && progress >= 0.5 && phase === 'inflight') {
       S.halfwayFired = true;
       const minsLeft = Math.round(timeLeft / 60000);
@@ -1119,7 +1110,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.0.0</p>
+    <p class="ver-t">Version 70.1.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1218,15 +1209,12 @@ ${dots}
       if (previewPlane) previewPlane.setAttribute('transform', `scale(${sc})`);
       saveS();
     });
-    // Set initial preview scale
     if (previewPlane) previewPlane.setAttribute('transform', `scale(${(S.planeScale || 100) / 100})`);
-    // Restore radar mode
     try {
       const saved = GM_getValue('tcfv_radar', 0);
       radarMode = typeof saved === 'number' ? saved : (saved ? 1 : 0);
       if (radarMode > 0) applyRadarMode(el.panel);
     } catch(e) {}
-    // Restore minimise state directly (doMin toggles so cannot be used here)
     if (S.min) {
       el.bod.style.display = 'none';
       document.querySelector('#tcfv-resize-handle').style.display = 'none';
@@ -1239,8 +1227,7 @@ ${dots}
   }
 
   function showPg(pg) {
-    // If faction flights are on and user switches to any other page, turn off faction view
-    if (factionFlightsOn) doFaction(); // always turn off faction view when navigating
+    if (factionFlightsOn) doFaction();
     S.page = pg;
     el.pgMain.style.display = pg === 'main' ? 'flex' : 'none';
     el.pgSet.style.display = pg === 'set' ? 'block' : 'none';
@@ -1291,30 +1278,22 @@ ${dots}
     const col = id => DIAG_STATUS_COLS[sysMap[id]] || '#444';
     return `<svg viewBox="0 0 280 200" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px">
   <rect width="280" height="200" fill="#050e05"/>
-  <!-- Fuselage -->
   <ellipse cx="140" cy="100" rx="13" ry="88" fill="none" stroke="#5ab0e8" stroke-width="1.5"/>
-  <!-- Main wings -->
   <polygon points="130,75 22,120 26,130 134,92" fill="#0a1a2a" stroke="#5ab0e8" stroke-width="1"/>
   <polygon points="150,75 258,120 254,130 146,92" fill="#0a1a2a" stroke="#5ab0e8" stroke-width="1"/>
-  <!-- Engine nacelles (L) -->
   <ellipse cx="38" cy="118" rx="8" ry="13" fill="#0a1a2a" stroke="#5ab0e8" stroke-width="1"/>
   <ellipse cx="78" cy="105" rx="7" ry="11" fill="#0a1a2a" stroke="#5ab0e8" stroke-width="1"/>
-  <!-- Engine nacelles (R) -->
   <ellipse cx="202" cy="105" rx="7" ry="11" fill="#0a1a2a" stroke="#5ab0e8" stroke-width="1"/>
   <ellipse cx="242" cy="118" rx="8" ry="13" fill="#0a1a2a" stroke="#5ab0e8" stroke-width="1"/>
-  <!-- Tail stabilisers -->
   <polygon points="131,168 96,179 99,185 133,175" fill="#0a1a2a" stroke="#5ab0e8" stroke-width="1"/>
   <polygon points="149,168 184,179 181,185 147,175" fill="#0a1a2a" stroke="#5ab0e8" stroke-width="1"/>
-  <!-- Nose -->
   <ellipse cx="140" cy="18" rx="6" ry="8" fill="#0a1a2a" stroke="#5ab0e8" stroke-width="1"/>
-  <!-- Indicator dots with labels -->
   <circle cx="140" cy="52" r="5" fill="${col('electrical')}" opacity="0.9"/>
   <circle cx="140" cy="80" r="5" fill="${col('pressure')}" opacity="0.9"/>
   <circle cx="38" cy="118" r="5" fill="${col('engines')}" opacity="0.9"/>
   <circle cx="252" cy="108" r="5" fill="${col('wings')}" opacity="0.9"/>
   <circle cx="140" cy="143" r="5" fill="${col('gear')}" opacity="0.9"/>
   <circle cx="140" cy="178" r="5" fill="${col('tail')}" opacity="0.9"/>
-  <!-- Connecting lines to labels -->
   <line x1="145" y1="52" x2="165" y2="52" stroke="#5ab0e8" stroke-width="0.5" opacity="0.4"/>
   <line x1="145" y1="80" x2="165" y2="80" stroke="#5ab0e8" stroke-width="0.5" opacity="0.4"/>
   <line x1="43" y1="118" x2="63" y2="118" stroke="#5ab0e8" stroke-width="0.5" opacity="0.4"/>
@@ -1330,25 +1309,19 @@ ${dots}
     const col = id => DIAG_STATUS_COLS[sysMap[id]] || '#444';
     return `<svg viewBox="0 0 280 190" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:190px">
   <rect width="280" height="190" fill="#050e05"/>
-  <!-- Fuselage -->
   <ellipse cx="140" cy="95" rx="10" ry="74" fill="none" stroke="#88ff44" stroke-width="1.5"/>
-  <!-- Straight wings -->
   <polygon points="132,88 20,96 22,104 134,95" fill="#0a1a0a" stroke="#88ff44" stroke-width="1"/>
   <polygon points="148,88 260,96 258,104 146,95" fill="#0a1a0a" stroke="#88ff44" stroke-width="1"/>
-  <!-- Propeller at nose -->
   <ellipse cx="140" cy="25" rx="6" ry="6" fill="#0a1a0a" stroke="#88ff44" stroke-width="1"/>
   <line x1="140" y1="8" x2="140" y2="22" stroke="#88ff44" stroke-width="2"/>
   <line x1="125" y1="20" x2="155" y2="20" stroke="#88ff44" stroke-width="2" stroke-linecap="round"/>
-  <!-- Tail stabilisers -->
   <polygon points="132,155 100,165 102,171 134,162" fill="#0a1a0a" stroke="#88ff44" stroke-width="1"/>
   <polygon points="148,155 180,165 178,171 146,162" fill="#0a1a0a" stroke="#88ff44" stroke-width="1"/>
-  <!-- Indicator dots -->
   <circle cx="140" cy="68" r="5" fill="${col('electrical')}" opacity="0.9"/>
   <circle cx="140" cy="22" r="5" fill="${col('engine')}" opacity="0.9"/>
   <circle cx="28" cy="96" r="5" fill="${col('wings')}" opacity="0.9"/>
   <circle cx="140" cy="128" r="5" fill="${col('gear')}" opacity="0.9"/>
   <circle cx="140" cy="162" r="5" fill="${col('tail')}" opacity="0.9"/>
-  <!-- Lines -->
   <line x1="145" y1="68" x2="165" y2="68" stroke="#88ff44" stroke-width="0.5" opacity="0.4"/>
   <line x1="145" y1="22" x2="165" y2="22" stroke="#88ff44" stroke-width="0.5" opacity="0.4"/>
   <line x1="33" y1="96" x2="53" y2="96" stroke="#88ff44" stroke-width="0.5" opacity="0.4"/>
@@ -1362,7 +1335,6 @@ ${dots}
     if (!inner) return;
     if (!S.diagnostics) S.diagnostics = generateDiagnostics();
     const d = S.diagnostics;
-    // Update flight gear status and detail based on flight phase
     const gearSys = d.systems.find(s => s.id === 'gear');
     if (gearSys) {
       const phase = S.flying ? (S.arrTime && (S.arrTime - Date.now() < 120000) ? 'landing' : 'flying') : 'ground';
@@ -1370,7 +1342,6 @@ ${dots}
         gearSys.status = 'green';
         gearSys.detail = 'Gear deployed';
       } else {
-        // Airborne — gear retracted (keep the random status from generation)
         gearSys.detail = 'Gear retracted';
       }
     }
@@ -1401,9 +1372,9 @@ ${dots}
   let factionFlightsOn = false;
   let factionPollTimer = null;
   let factionDrawTimer = null;
-  let factionData = {}; // { memberId: { name, src, dst, depTime, arrTime, method } }
-  let factionAbroad = {}; // members landed abroad { memberId: { name, dest } }
-  let savedPlayerViewBox = ''; // saved when switching to faction view
+  let factionData = {};
+  let factionAbroad = {};
+  let savedPlayerViewBox = '';
 
   function matchFactionTicket(method) {
     if (!method) return 'standard';
@@ -1419,7 +1390,7 @@ ${dots}
     if (!g) return;
     if (!factionFlightsOn) { g.innerHTML = ''; return; }
     const now = Date.now();
-    // Pre-build route groups for same-route spreading
+    // Pre-build route groups for same-route spreading (any direction)
     const routeGroups = {};
     for (const [rid, rm] of Object.entries(factionData)) {
       const rk = [rm.src, rm.dst].sort().join('_');
@@ -1431,14 +1402,13 @@ ${dots}
       const sk = m.src, dk = m.dst;
       if (!sk || !dk || sk === dk || !DESTS[sk] || !DESTS[dk]) continue;
       const total = m.arrTime - m.depTime;
-      // total<=0 when exact times not yet fetched (arrTime still 0); use midpoint until data arrives
       let progress;
       if (total > 0) {
         progress = Math.min(1, Math.max(0, (now - m.depTime) / total));
       } else if (m.arrTime === 0) {
-        progress = 0.5; // midpoint placeholder until user/travel call completes
+        progress = 0.5;
       } else {
-        continue; // flight has ended
+        continue;
       }
       const bez = buildBez(sk, dk);
       if (!bez) continue;
@@ -1447,17 +1417,27 @@ ${dots}
         const p = bPt(i / 60, bez.s, bez.c, bez.d);
         pts.push(`${p.x.toFixed(1)},${p.y.toFixed(1)}`);
       }
-      // Spread members on same route so planes don't overlap
+      // FIX 1 (v70.1.0): Same-route spreading via perpendicular offset.
+      // Previous code added an offset to `progress`, which fails for opposite-
+      // direction flights because both ends of the route map to the same
+      // physical point on the bezier. A perpendicular offset to the path
+      // tangent guarantees separation regardless of direction.
       const rk2 = [sk, dk].sort().join('_');
       const grp = routeGroups[rk2] || [fid];
       const grpIdx = grp.indexOf(fid);
-      const spread = grp.length > 1 ? (grpIdx - (grp.length - 1) / 2) * 0.12 : 0;
-      const t = Math.max(0.001, Math.min(0.999, progress + spread));
-      const pos = bPt(t, bez.s, bez.c, bez.d);
-      const ang = bAng(t, bez.s, bez.c, bez.d) + 90;
-      // In faction view, currentZoom=1 (full world), so no zoom compensation needed
+      const t = Math.max(0.001, Math.min(0.999, progress));
+      const basePos = bPt(t, bez.s, bez.c, bez.d);
+      const tangentDeg = bAng(t, bez.s, bez.c, bez.d);
+      // Perpendicular offset (px), evenly distributed around path centreline
+      const perpDist = grp.length > 1 ? (grpIdx - (grp.length - 1) / 2) * 9 : 0;
+      const perpRad = (tangentDeg + 90) * Math.PI / 180;
+      const pos = {
+        x: basePos.x + Math.cos(perpRad) * perpDist,
+        y: basePos.y + Math.sin(perpRad) * perpDist,
+      };
+      const ang = tangentDeg + 90;
       const sw = '1.2';
-      const sc = '0.98'; // ×1.5 for better visibility
+      const sc = '0.98';
       const ticket = matchFactionTicket(m.method);
       const plane = TICKETS[ticket]?.plane || 'jumbo';
       let shape;
@@ -1480,7 +1460,6 @@ ${dots}
 <g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${fAng.toFixed(1)}) scale(${sc})" opacity="0.7">${shape}</g>
 <text x="${(pos.x + 4).toFixed(1)}" y="${(pos.y - 3).toFixed(1)}" fill="white" font-size="8" font-family="monospace" font-weight="bold" opacity="0.9">${m.name}</text>`;
     }
-    // Abroad location markers
     const abroadGroups = {};
     for (const [, mb] of Object.entries(factionAbroad)) {
       if (!mb.dest || !DESTS[mb.dest]) continue;
@@ -1500,18 +1479,15 @@ ${dots}
     g.innerHTML = html;
   }
 
-  let factionAllMembers = {}; // all members for roster { id: { name, flying } }
+  let factionAllMembers = {};
 
   function renderFactionRoster() {
     if (!el.log || !factionFlightsOn) return;
-    // Use data attributes on existing divs to update in-place (no scroll jump)
     const now = Date.now();
-    // Build flying entries sorted by time remaining
     const flying = Object.entries(factionData)
       .map(([id, m]) => ({ id, ...m }))
       .sort((a, b) => a.arrTime - b.arrTime);
     let html = '';
-    const colW = (s, w) => `<span style="display:inline-block;min-width:${w}px;overflow:hidden">${s}</span>`;
     for (const m of flying) {
       const rem = Math.max(0, m.arrTime - now);
       const hrs = Math.floor(rem / 3600000);
@@ -1520,20 +1496,16 @@ ${dots}
       const srcCity = DESTS[m.src]?.city || m.src || '?';
       const dstCity = DESTS[m.dst]?.city || m.dst || '?';
       const timeStr = hrs > 0 ? `${hrs}h ${mins}m` : (mins > 0 ? `${mins}m ${secs}s` : `${secs}s`);
-      const mt = (m.method || 'Std').substring(0, 7);
-      // SVG ticket icon — jumbo silhouette or prop silhouette
       const isSmall = (m.method && (m.method.toLowerCase().includes('airstrip') || m.method.toLowerCase().includes('private')));
       const planeIcon = isSmall
         ? '<svg width="14" height="14" viewBox="-6 -6 12 12"><ellipse cx="0" cy="0" rx="1" ry="3.5" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="-4,-0.3 -3.5,0.5 3.5,0.5 4,-0.3" fill="#aaa" stroke="#666" stroke-width="0.5"/><line x1="-1.2" y1="3.5" x2="1.2" y2="3.5" stroke="#aaa" stroke-width="0.9"/></svg>'
         : '<svg width="14" height="14" viewBox="-7 -7 14 14"><ellipse cx="0" cy="0" rx="1.5" ry="4" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,-1.5 -6,1 -5.5,2 0,-0.2 5.5,2 6,1" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,2.5 -2,4 -1.5,4.5 0,3.5 1.5,4.5 2,4" fill="#aaa" stroke="#666" stroke-width="0.5"/></svg>';
       html += `<div class="tl tln" style="color:#88ddff;font-size:10px;line-height:16px;display:flex;align-items:center;gap:3px"><span style="flex-shrink:0;display:inline-flex;align-items:center">${planeIcon}</span><span style="flex:0 0 68px;overflow:hidden;white-space:nowrap">${m.name}</span><span style="flex:0 0 102px;overflow:hidden;white-space:nowrap">${srcCity}→${dstCity}</span><span style="flex:1;white-space:nowrap">${timeStr}</span></div>`;
     }
-    // Abroad members (landed at foreign city)
     for (const [, ab] of Object.entries(factionAbroad)) {
       const dCity = DESTS[ab.dest]?.city || ab.dest || '?';
       html += '<div class="tl tln" style="color:#88aacc;font-size:10px;line-height:16px;display:flex;align-items:center;gap:4px"><span style="flex-shrink:0"><svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#44cc66" stroke="#226644" stroke-width="0.8"/></svg></span><span style="flex:0 0 68px">' + ab.name + '</span><span style="flex:1;color:#77cc99">' + dCity + '</span></div>';
     }
-    // Non-flying members alphabetically
     const flyingIds = new Set(Object.keys(factionData));
     const nonFlying = Object.values(factionAllMembers)
       .filter(m => !flyingIds.has(m.id))
@@ -1542,28 +1514,23 @@ ${dots}
       html += `<div class="tl" style="color:#777">  ${m.name}</div>`;
     }
     if (!html) html = '<div class="tl tln">No faction members currently flying.</div>';
-    // Only update if content has changed (prevents scroll jumps)
     if (el.log.innerHTML !== html) {
       const scrollPos = el.log.scrollTop;
       el.log.innerHTML = html;
-      el.log.scrollTop = scrollPos; // restore scroll position
+      el.log.scrollTop = scrollPos;
     }
   }
 
   function fetchFactionFlights() {
     if (!S.apiKey || !factionFlightsOn) return;
-    // Use v2 faction/members — status.description is the only reliable data for other users.
-    // Individual user/travel calls don't return status for other users.
     GM_xmlhttpRequest({
       method: 'GET',
       url: `https://api.torn.com/v2/faction?selections=members&key=${S.apiKey}`,
       onload: r => {
-        console.log('[TCFV] Faction members API response:', r.responseText.substring(0, 200));
         try {
           const data = JSON.parse(r.responseText);
           if (data.error) {
             const ferr = typeof data.error === 'object' ? data.error.error : data.error;
-            console.error('[TCFV] Faction members API error:', ferr);
             if (el.log && factionFlightsOn) {
               el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction error: ' + ferr + ' — check api key</div>';
             }
@@ -1584,9 +1551,7 @@ ${dots}
 
             const st = m.status;
             const desc = (st && st.description) ? st.description : '';
-            const descL = desc.toLowerCase();
 
-            // Detect flying: "Traveling from X to Y"
             if (/traveling from .+ to .+/i.test(desc)) {
               const toM = desc.match(/traveling from .+ to (.+)$/i);
               const fromM = desc.match(/traveling from (.+?) to /i);
@@ -1601,21 +1566,17 @@ ${dots}
                 const stUntil = (st && st.until) ? st.until * 1000 : 0;
                 const arrTime3 = stUntil > Date.now() ? stUntil : (Date.now() + estDur / 2);
                 const depTime3 = arrTime3 - estDur;
-                console.log('[TCFV] Faction traveling:', membName, sk3 || '?', '->', dk3, '| until:', stUntil ? new Date(stUntil).toISOString() : 'est');
                 factionData[memberId] = { name: membName, src: srcFinal, dst: dk3, depTime: depTime3, arrTime: arrTime3, method: 'Standard' };
               }
               continue;
             }
 
-            // Detect abroad: "In UAE", "In a Chinese hospital", "Visiting Japan", etc.
             const abroadPatterns = [
-              // "In UAE", "In South Africa", "In a Chinese hospital for 10 mins"
               /^in\s+(?:a\s+)?([a-z]+(?:\s+[a-z]+){0,2})/i,
               /^visiting\s+(.+?)(?:\s+for\s|$)/i,
               /^abroad in\s+(.+?)(?:\s+for\s|$)/i,
               /hospitali[sz]ed in\s+(.+?)(?:\s+for\s|$)/i,
               /serving time in\s+(?:a\s+)?(.+?)(?:\s+(?:jail|prison)|\s+for\s|$)/i,
-              // "On the run in Japan"
               /\bin\s+(?:a\s+)?([a-z]+(?:\s+[a-z]+){0,2})\s+(?:hospital|jail|prison)/i,
             ];
             for (const pat of abroadPatterns) {
@@ -1630,10 +1591,8 @@ ${dots}
             }
           }
 
-          // Add self (player) from stored state — exact times from own travel data
           if (S.flying && S.src && S.dst && S.player) {
             const selfId = 'self_player';
-            // Only add if not already in factionData (avoid double)
             const alreadyIn = Object.values(factionData).some(fx => fx.name === S.player);
             if (!alreadyIn) {
               factionData[selfId] = {
@@ -1649,32 +1608,28 @@ ${dots}
           zoomToFitFaction();
           renderFactionRoster();
         } catch(e) {
-          console.error('[TCFV] Faction API parse error:', String(e));
           if (el.log && factionFlightsOn) {
             el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction parse error — check api key</div>';
           }
         }
       },
       onerror: () => {
-        console.error('[TCFV] Faction API request failed');
         if (el.log && factionFlightsOn) {
           el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction request failed — check network</div>';
         }
       },
     });
   }
+
   function zoomToFitFaction() {
-    // Compute bounding box of all faction flyer positions and zoom to fit
     if (!el.svg || !factionFlightsOn) return;
     const now = Date.now();
     const pts = [];
     for (const m of Object.values(factionData)) {
       if (!m.src || !m.dst || !DESTS[m.src] || !DESTS[m.dst]) continue;
-      // Add source and destination dots
       const s = toXY(DESTS[m.src].lon, DESTS[m.src].lat);
       const d = toXY(DESTS[m.dst].lon, DESTS[m.dst].lat);
       pts.push(s, d);
-      // Also add current plane position
       const total = m.arrTime - m.depTime;
       if (total > 0) {
         const t = Math.min(0.999, Math.max(0.001, (now - m.depTime) / total));
@@ -1697,10 +1652,8 @@ ${dots}
     minY = Math.max(0, minY - pad);
     maxX = Math.min(MAP_W, maxX + pad);
     maxY = Math.min(MAP_H, maxY + pad);
-    // Enforce minimum viewport
     const vw = Math.max(maxX - minX, 150);
     const vh = Math.max(maxY - minY, 75);
-    // Maintain 2:1 aspect ratio
     let fw = vw;
     let fh = vh;
     if (fw / fh < 2) { fw = fh * 2; }
@@ -1724,7 +1677,6 @@ ${dots}
         factionFlightsOn = false;
         return;
       }
-      // Ensure main map panel is visible (faction overlays the map view)
       if (el.pgMain) el.pgMain.style.display = 'flex';
       if (el.pgSet)  el.pgSet.style.display  = 'none';
       if (el.pgCred) el.pgCred.style.display = 'none';
@@ -1733,19 +1685,15 @@ ${dots}
       S.page = 'main';
       document.querySelectorAll('.thb').forEach(b => b.classList.remove('ta'));
       btn?.classList.add('ta');
-      // Save player's current viewBox and zoom, then zoom to fit faction flyers
       if (el.svg) {
         savedPlayerViewBox = el.svg.getAttribute('viewBox') || `0 0 ${MAP_W} ${MAP_H}`;
-        // Start at full world; after data loads zoomToFitFaction() will tighten it
         el.svg.setAttribute('viewBox', `0 0 ${MAP_W} ${MAP_H}`);
         currentZoom = 1;
       }
-      // Hide player path and plane elements; clear dot highlights
       if (pathg) pathg.style.display = 'none';
       if (planeg) planeg.style.display = 'none';
       highlightDots(null, null);
       stopDashAnim();
-      // Fetch and show faction flights, then redraw positions every 5s
       fetchFactionFlights();
       factionPollTimer = setInterval(fetchFactionFlights, 60000);
       factionDrawTimer = setInterval(() => { drawFactionFlights(); zoomToFitFaction(); renderFactionRoster(); }, 5000);
@@ -1758,7 +1706,6 @@ ${dots}
       factionData = {};
       const fg = document.getElementById('tcfv-factiong');
       if (fg) fg.innerHTML = '';
-      // Restore player's view
       if (el.svg && savedPlayerViewBox) {
         el.svg.setAttribute('viewBox', savedPlayerViewBox);
         currentZoom = MAP_W / parseFloat(savedPlayerViewBox.split(' ')[2]);
@@ -1766,7 +1713,7 @@ ${dots}
       if (pathg) pathg.style.display = '';
       if (S.flying) highlightDots(S.src, S.dst);
       else if (S.previewDst) highlightDots(S.src, S.previewDst);
-      renderLog(); // restore player commentary log
+      renderLog();
       if (planeg) planeg.style.display = '';
       if (S.flying || S.previewDst) startDashAnim();
     }
@@ -1784,7 +1731,7 @@ ${dots}
     { name:'grey', rc:'#cccccc', mid:'#666666', dark:'#0a0a0a', line:'#333333', glow:'rgba(200,200,200,.2)', hue:0 },
   ];
 
-  let radarMode = 0; // 0=normal, 1-8=colour modes
+  let radarMode = 0;
 
   function applyRadarMode(panel) {
     const mode = RADAR_MODES[radarMode];
@@ -1817,14 +1764,12 @@ ${dots}
     const panel = el.panel;
     const resizeHandle = document.querySelector('#tcfv-resize-handle');
     if (S.min) {
-      // Collapse to just the header bar
       el.bod.style.display = 'none';
       resizeHandle.style.display = 'none';
       panel.style.height = 'auto';
       panel.style.minHeight = '0';
       panel.style.resize = 'none';
     } else {
-      // Restore to full size
       el.bod.style.display = 'block';
       resizeHandle.style.display = 'block';
       panel.style.height = S.ph_panel + 'px';
@@ -1844,7 +1789,7 @@ ${dots}
       if (e.target.closest('button')) return;
       drag = true; ox = e.clientX - panel.offsetLeft; oy = e.clientY - panel.offsetTop;
       e.preventDefault();
-      e.stopPropagation(); // prevent Torn City map elements from receiving this event
+      e.stopPropagation();
     });
     document.addEventListener('mousemove', e => {
       if (!drag) return;
@@ -1874,14 +1819,13 @@ ${dots}
   }
 
   /* ─────────────────────────────────────────────────────────────
-     PREVIEW DESTINATION  (immediate update when dest clicked)
+     PREVIEW DESTINATION
   ───────────────────────────────────────────────────────────── */
 
   function previewDest(dstK) {
     if (S.flying) return;
     S.previewDst = dstK;
     drawPath(S.src, dstK);
-    // Zoom map to frame the route
     if (el.svg) {
       const vb = getZoomedViewBox(S.src, dstK);
       el.svg.setAttribute('viewBox', vb);
@@ -1903,7 +1847,6 @@ ${dots}
     const t = norm(text);
     for (const [k, d] of Object.entries(DESTS)) {
       const nc = norm(d.city), ncn = norm(d.country), nl = norm(d.label);
-      // Check both directions: input contains field OR field contains input, plus exact key match
       if (t === k || t.includes(k) || k.includes(t)) return k;
       if (t.includes(nc) || nc.includes(t)) return k;
       if (t.includes(ncn) || ncn.includes(t)) return k;
@@ -1959,13 +1902,11 @@ ${dots}
         const cls = (t.className || '').toString().toLowerCase();
         const id = (t.id || '').toLowerCase();
 
-        // Destination dot click → preview immediately
         if (!S.flying && (cls.includes('country') || cls.includes('destination') || cls.includes('travel') || cls.includes('city') || cls.includes('location'))) {
           const dm = matchDest(t.textContent);
           if (dm && dm !== S.src) { previewDest(dm); }
         }
 
-        // Ticket type selection → update ticket on visualiser immediately
         if (cls.includes('ticket') || cls.includes('class') || cls.includes('method') || cls.includes('airstrip')) {
           const tk = matchTicket(t.textContent);
           if (S.ticket !== tk) {
@@ -1979,7 +1920,6 @@ ${dots}
           }
         }
 
-        // Return home / fly back button detection
         if ((txt.includes('return') && (txt.includes('home') || txt.includes('torn') || txt.includes('back'))) ||
           txt === 'fly home' || txt === 'return home' || txt === 'go home' ||
           cls.includes('return') || cls.includes('fly-home') || id.includes('return') || id.includes('home')) {
@@ -1989,7 +1929,6 @@ ${dots}
           }
         }
 
-        // Fly button
         if (txt === 'fly' || txt === 'fly now' || txt === 'fly!' || txt === 'take off' ||
           cls.includes('fly-btn') || cls.includes('flybtn') || id.includes('fly') || id.includes('takeoff')) {
           const dst = readSelectedDest() || S.previewDst || S.dst;
@@ -2003,7 +1942,7 @@ ${dots}
   }
 
   /* ─────────────────────────────────────────────────────────────
-     NETWORK HOOK  (XHR + fetch intercept)
+     NETWORK HOOK
   ───────────────────────────────────────────────────────────── */
 
   function hookNetwork() {
@@ -2037,8 +1976,6 @@ ${dots}
     const arr = (travel.timestamp || 0) * 1000;
     if (!dest || !dep || !arr) return;
     const dk = matchDest(dest), tk = matchTicket(method);
-    // Do not reinitialise an already-tracked flight — would clear log and commentary.
-    // Use arrival time with tolerance since dep time may differ (click vs API timestamps).
     if (S.flying && Math.abs(S.arrTime - arr) < 10000) return;
     if (dk && dk !== 'torn') {
       startFlightTimes('torn', dk, tk, dep, arr, false);
@@ -2056,16 +1993,13 @@ ${dots}
     const obs = new MutationObserver(() => {
       clearTimeout(db);
       db = setTimeout(() => {
-        // Check for airport closed text immediately on any DOM change
         if (!S.airportClosed && document.body &&
             document.body.textContent.includes('You are currently in a race, you must leave or wait')) {
-          // Kick the tick loop immediately to handle airport closed
           if (loopTmr) clearTimeout(loopTmr);
           tick();
           return;
         }
 
-        // Check for ticket type changes
         const tk = readSelectedTicket();
         if (tk && tk !== S.ticket) {
           S.ticket = tk;
@@ -2077,7 +2011,6 @@ ${dots}
           saveS();
         }
 
-        // Check for flying text appearing in DOM
         if (!S.flying) {
           const body = document.body.textContent;
           const m = body.match(/(?:travelling|traveling|flying)\s+to\s+([A-Za-z\s]{3,30})(?:[.,\n]|$)/i);
@@ -2134,7 +2067,6 @@ ${dots}
         isTornCity: dk === 'torn',
       };
       triggerComm('return_start', p);
-      // Suppress the standard takeoff ATC message — return_start already has one
       S.phasesTriggered.takeoff = true;
       saveS();
     }
@@ -2150,22 +2082,19 @@ ${dots}
       method: 'GET',
       url: `https://api.torn.com/user/?selections=travel,basic&key=${key}`,
       onload: r => {
-        console.log('[TCFV] apiGet (user/travel,basic) response:', r.responseText.substring(0, 200));
         try { cb(null, JSON.parse(r.responseText)); } catch(e) { cb(e); }
       },
-      onerror: e => { console.error('[TCFV] apiGet request failed:', e); cb(e); },
+      onerror: e => { cb(e); },
     });
   }
 
   function testApiKey(key, msgEl) {
     if (!key) { msgEl.textContent = 'Please enter an API key first.'; return; }
     msgEl.innerHTML = 'Testing\u2026'; msgEl.style.color = '#aaa';
-    // Step 1: test user/basic for player name + travel access
     GM_xmlhttpRequest({
       method: 'GET',
       url: `https://api.torn.com/user/?selections=basic,travel&key=${key}`,
       onload: r1 => {
-        console.log('[TCFV] Test user API response:', r1.responseText.substring(0, 200));
         let html = '';
         try {
           const d1 = JSON.parse(r1.responseText);
@@ -2184,17 +2113,14 @@ ${dots}
           msgEl.innerHTML = html;
           return;
         }
-        // Step 2: test faction access
         GM_xmlhttpRequest({
           method: 'GET',
           url: `https://api.torn.com/v2/faction?selections=members&key=${key}`,
           onload: r2 => {
-            console.log('[TCFV] Test faction/travel API response:', r2.responseText.substring(0, 200));
             try {
               const d2 = JSON.parse(r2.responseText);
               if (d2.error) {
                 const fe = typeof d2.error === 'object' ? d2.error.error : d2.error;
-                console.warn('[TCFV] Test faction/travel error:', fe);
                 html += `<span style="color:#fa4">&#10007; Faction data: ${fe} — check api key: tick Faction section in key settings (Limited or higher)</span>`;
               } else {
                 const rawM = d2.members || {};
@@ -2230,7 +2156,6 @@ ${dots}
       const dk = matchDest(tr.destination || '');
       const tk = matchTicket(tr.method || '');
       const dep = tr.departed * 1000, arr = tr.timestamp * 1000;
-      // Do not reinitialise an already-tracked flight — would clear log and commentary
       if (S.flying && Math.abs(S.arrTime - arr) < 10000) return;
       if (dk && dk !== 'torn') {
         startFlightTimes('torn', dk, tk, dep, arr, false);
@@ -2265,7 +2190,6 @@ ${dots}
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
-/* Force Courier New throughout all child elements — overrides Edge/Firefox UA monospace */
 #tcfv * {
   font-family: 'Courier New', Courier, 'Lucida Console', monospace !important;
 }
@@ -2345,8 +2269,6 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
   opacity: 0.7;
 }
 #tcfv-resize-handle:hover { opacity: 1; }
-
-/* ── DIAGNOSTICS ── */
 #tcfv-diag { flex-direction: column; height: 100%; overflow-y: auto; background: #050e05; }
 #tcfv-diag-inner { padding: 0; flex: 1; }
 .diag-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px 4px; border-bottom: 1px solid #1a3520; }
@@ -2366,7 +2288,6 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
 #tcfv.radar-mode .diag-name { color: var(--rc); }
 #tcfv.radar-mode .diag-detail { color: var(--rc-mid); }
 #tcfv.radar-mode .diag-row { border-bottom-color: var(--rc-line); }
-/* ── MORE SETTINGS ── */
 #tcfv-more { padding: 14px 16px; overflow-y: auto; height: 100%; box-sizing: border-box; }
 #tcfv-more h3 { color: #5ab0e8; font-size: 11px; margin: 0 0 12px; border-bottom: 1px solid #1e3d5c; padding-bottom: 6px; letter-spacing: 2px; text-transform: uppercase; }
 #tcfv-more p { margin: 8px 0; color: #8ab8d8; font-size: 11px; line-height: 1.65; }
@@ -2432,10 +2353,6 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
   ───────────────────────────────────────────────────────────── */
 
   function injectStatcounter() {
-    // Fires a 1×1 invisible tracking pixel to c.statcounter.com via a hidden <img>.
-    // Waits for window.load first (or fires immediately if already loaded) so it
-    // behaves like a standard bottom-of-page analytics snippet.
-    // The { once: true } option removes the listener automatically after it fires.
     const fire = () => {
       try {
         const sid = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -2458,24 +2375,20 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
   function init() {
     loadS();
     injectStatcounter();
-    // Only build the HUD if fastRestore hasn't already created the panel
     if (!document.getElementById('tcfv')) {
       injectCSS();
       buildHUD();
       renderLog();
     } else {
-      // Panel already exists — just wire up the dynamic hooks
-      injectCSS(); // safe to call again (adds/overwrites styles)
+      injectCSS();
     }
 
     hookClicks();
     hookNetwork();
     watchDOM();
 
-    // Restore in-flight or preview state from previous session
     if (S.flying && S.dst) {
       if (Date.now() >= S.arrTime) {
-        // Landed while page was closed
         S.flying = false; S.src = S.dst; S.dst = null;
         S.phasesTriggered = {}; saveS();
       } else {
@@ -2494,12 +2407,8 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
     initFromApi();
   }
 
-  // Fast path: restore panel and log at 100ms. init() at 400ms wires hooks and starts loop.
-  // startLoop is NOT called here — init() owns the loop to avoid double-starting.
   function fastRestore() {
     loadS();
-    // If airport was closed when saved, pre-load the log with just the airport message
-    // so renderLog() shows it correctly before init() wires the tick loop
     if (S.airportClosed) {
       const am = '\x01Airport closed — you are in a <a href="https://www.torn.com/page.php?sid=racing" target="_blank" style="color:#ff6666;text-decoration:underline">race</a>.';
       S.log = [am];
