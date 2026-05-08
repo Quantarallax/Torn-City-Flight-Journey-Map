@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      64.0.0
+// @version      65.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1119,7 +1119,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 64.0.0</p>
+    <p class="ver-t">Version 65.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1402,6 +1402,7 @@ ${dots}
   let factionPollTimer = null;
   let factionDrawTimer = null;
   let factionData = {}; // { memberId: { name, src, dst, depTime, arrTime, method } }
+  let factionAbroad = {}; // members landed abroad { memberId: { name, dest } }
   let savedPlayerViewBox = ''; // saved when switching to faction view
 
   function matchFactionTicket(method) {
@@ -1479,6 +1480,23 @@ ${dots}
 <g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${fAng.toFixed(1)}) scale(${sc})" opacity="0.7">${shape}</g>
 <text x="${(pos.x + 4).toFixed(1)}" y="${(pos.y - 3).toFixed(1)}" fill="#999" font-size="7" font-family="monospace" opacity="0.8">${m.name}</text>`;
     }
+    // Abroad location markers
+    const abroadGroups = {};
+    for (const [, mb] of Object.entries(factionAbroad)) {
+      if (!mb.dest || !DESTS[mb.dest]) continue;
+      if (!abroadGroups[mb.dest]) abroadGroups[mb.dest] = [];
+      abroadGroups[mb.dest].push(mb.name);
+    }
+    for (const [destKey2, abNames] of Object.entries(abroadGroups)) {
+      const dp2 = DESTS[destKey2];
+      if (!dp2) continue;
+      const dp2pos = toXY(dp2.lon, dp2.lat);
+      abNames.forEach((nm2, ni2) => {
+        const yOff2 = (ni2 - (abNames.length - 1) / 2) * 9;
+        html += '<circle cx="' + dp2pos.x.toFixed(1) + '" cy="' + dp2pos.y.toFixed(1) + '" r="4" fill="#5577aa" stroke="#334466" stroke-width="0.8" opacity="0.7"/>';
+        html += '<text x="' + (dp2pos.x + 6).toFixed(1) + '" y="' + (dp2pos.y + yOff2 + 2).toFixed(1) + '" fill="#88aacc" font-size="7" font-family="monospace" opacity="0.85">[A] ' + nm2 + '</text>';
+      });
+    }
     g.innerHTML = html;
   }
 
@@ -1509,6 +1527,11 @@ ${dots}
         ? '<svg width="14" height="14" viewBox="-6 -6 12 12"><ellipse cx="0" cy="0" rx="1" ry="3.5" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="-4,-0.3 -3.5,0.5 3.5,0.5 4,-0.3" fill="#aaa" stroke="#666" stroke-width="0.5"/><line x1="-1.2" y1="3.5" x2="1.2" y2="3.5" stroke="#aaa" stroke-width="0.9"/></svg>'
         : '<svg width="14" height="14" viewBox="-7 -7 14 14"><ellipse cx="0" cy="0" rx="1.5" ry="4" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,-1.5 -6,1 -5.5,2 0,-0.2 5.5,2 6,1" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,2.5 -2,4 -1.5,4.5 0,3.5 1.5,4.5 2,4" fill="#aaa" stroke="#666" stroke-width="0.5"/></svg>';
       html += `<div class="tl tln" style="color:#88ddff;font-size:10px;line-height:16px;display:flex;align-items:center;gap:3px"><span style="flex-shrink:0;display:inline-flex;align-items:center">${planeIcon}</span><span style="flex:0 0 68px;overflow:hidden;white-space:nowrap">${m.name}</span><span style="flex:0 0 102px;overflow:hidden;white-space:nowrap">${srcCity}→${dstCity}</span><span style="flex:1;white-space:nowrap">${timeStr}</span></div>`;
+    }
+    // Abroad members (landed at foreign city)
+    for (const [, ab] of Object.entries(factionAbroad)) {
+      const dCity = DESTS[ab.dest]?.city || ab.dest || '?';
+      html += '<div class="tl tln" style="color:#88aacc;font-size:10px;line-height:16px;display:flex;align-items:center;gap:4px"><span>[A]</span><span style="flex:0 0 68px">' + ab.name + '</span><span style="flex:1;color:#6699aa">' + dCity + ' (abroad)</span></div>';
     }
     // Non-flying members alphabetically
     const flyingIds = new Set(Object.keys(factionData));
@@ -1553,11 +1576,21 @@ ${dots}
             : rawMembers;
           factionAllMembers = {};
           factionData = {};
+          factionAbroad = {};
           for (const [id, m] of Object.entries(members)) {
             const memberId = String(m.id || m.player_id || id);
             factionAllMembers[memberId] = { id: memberId, name: m.name || ('ID' + id) };
             const st = m.status;
             if (!st) continue;
+            // Detect members abroad (landed at foreign city, not flying)
+            if (st.state === 'Abroad') {
+              const abMatch = (st.description || '').match(/(?:in|visiting)\s+(.+)$/i);
+              const abDest = abMatch ? matchDest(abMatch[1].trim()) : null;
+              if (abDest && abDest !== 'torn') {
+                factionAbroad[memberId] = { name: m.name || ('ID' + id), dest: abDest };
+              }
+              continue;
+            }
             if (st.state !== 'Traveling' && st.state !== 'Travelling') continue;
             // description e.g. "Traveling from Torn to United Arab Emirates"
             const desc = st.description || '';
@@ -1591,7 +1624,12 @@ ${dots}
                     factionData[fetchId].arrTime = arrT;
                     factionData[fetchId].depTime = depT;
                     factionData[fetchId].method = tr.method || 'Standard';
-                    console.log('[TCFV] Exact travel for', factionData[fetchId].name, '->', factionData[fetchId].dst, 'arr', new Date(arrT).toISOString());
+                    const tNow2 = Date.now();
+                    const fullDur2 = arrT - depT;
+                    const pct2 = fullDur2 > 0 ? Math.round(((tNow2 - depT) / fullDur2) * 100) : 50;
+                    const rem2 = Math.round(Math.max(0, arrT - tNow2) / 60000);
+                    console.log('[TCFV] Travel confirmed:', factionData[fetchId].name,
+                      '-> ' + factionData[fetchId].dst, '| progress:', pct2 + '%', '| remaining:', rem2 + 'min');
                     drawFactionFlights();
                     zoomToFitFaction();
                     renderFactionRoster();
