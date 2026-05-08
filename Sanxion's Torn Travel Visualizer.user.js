@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      60.0.0
+// @version      61.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1116,7 +1116,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 60.0.0</p>
+    <p class="ver-t">Version 61.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1236,6 +1236,8 @@ ${dots}
   }
 
   function showPg(pg) {
+    // If faction flights are on and user switches to any other page, turn off faction view
+    if (factionFlightsOn && pg !== S.page) doFaction();
     S.page = pg;
     el.pgMain.style.display = pg === 'main' ? 'flex' : 'none';
     el.pgSet.style.display = pg === 'set' ? 'block' : 'none';
@@ -1629,7 +1631,8 @@ ${dots}
     const vw = Math.max(maxX - minX, 150);
     const vh = Math.max(maxY - minY, 75);
     // Maintain 2:1 aspect ratio
-    let fw = vw, fh = fh = vh;
+    let fw = vw;
+    let fh = vh;
     if (fw / fh < 2) { fw = fh * 2; }
     const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
     const nx = Math.max(0, Math.min(MAP_W - fw, cx - fw / 2));
