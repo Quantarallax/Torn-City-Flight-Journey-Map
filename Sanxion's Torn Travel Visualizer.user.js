@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.2.0
+// @version      70.3.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -54,11 +54,7 @@
   };
 
   /* ─────────────────────────────────────────────────────────────
-     TICKET TYPES  (per Torn City wiki)
-     Standard    = Jumbo Jet   (max alt 32,000 ft)
-     Business    = Jumbo Jet   (max alt 32,000 ft)
-     Private     = Private Plane (max alt 32,000 ft)
-     Airstrip    = Private Plane single-prop (max alt 12,000 ft)
+     TICKET TYPES
   ───────────────────────────────────────────────────────────── */
 
   const TICKETS = {
@@ -88,8 +84,7 @@
   const rndFlightNum = () => 'TC' + (Math.floor(Math.random() * 9000) + 1000);
 
   /* ─────────────────────────────────────────────────────────────
-     COMMENTARY  (keyed by phase; each fn(params)->string)
-     No duplicates — each phase fires exactly once per flight.
+     COMMENTARY
   ───────────────────────────────────────────────────────────── */
 
   const INFLIGHT_FIXED_START_LARGE = [
@@ -212,7 +207,7 @@
   }
 
   /* ─────────────────────────────────────────────────────────────
-     STATE  — persisted via GM_setValue
+     STATE
   ───────────────────────────────────────────────────────────── */
 
   let S = {
@@ -982,7 +977,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.2.0</p>
+    <p class="ver-t">Version 70.3.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1229,7 +1224,7 @@ ${dots}
   }
 
   /* ─────────────────────────────────────────────────────────────
-     FACTION FLIGHTS  (Fix 1 + Fix 2 applied here)
+     FACTION FLIGHTS  (Fix 1 + Fix 2 + Fix 3 applied)
   ───────────────────────────────────────────────────────────── */
 
   let factionFlightsOn = false;
@@ -1280,8 +1275,7 @@ ${dots}
         pts.push(`${p.x.toFixed(1)},${p.y.toFixed(1)}`);
       }
       // FIX 1 (v70.1.0): Same-route spreading via perpendicular offset to path
-      // tangent. Works for opposite-direction flights (a progress-only offset
-      // doesn't, since both ends of the route map to the same physical point).
+      // tangent. Works for opposite-direction flights.
       const rk2 = [sk, dk].sort().join('_');
       const grp = routeGroups[rk2] || [fid];
       const grpIdx = grp.indexOf(fid);
@@ -1315,8 +1309,7 @@ ${dots}
   <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="#333" stroke-width="1.2" stroke-linecap="round"/>`;
       }
       const fAng = (plane === 'prop_plane') ? (ang + 180) : ang;
-      // FIX 2 (v70.2.0): Alternate name above/below plane (even grpIdx above,
-      // odd below). Black stroke around text gives readability on any background.
+      // FIX 2 (v70.2.0): Alternate name above/below plane based on grpIdx parity.
       const lblY = (grpIdx % 2 === 0) ? (pos.y - 6) : (pos.y + 11);
       html += `<polyline points="${pts.join(' ')}" fill="none" stroke="#888" stroke-width="${sw}" stroke-dasharray="10,6" opacity="0.45"/>
 <g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${fAng.toFixed(1)}) scale(${sc})" opacity="0.7">${shape}</g>
@@ -1429,18 +1422,28 @@ ${dots}
               }
               continue;
             }
+            // FIX 3 (v70.3.0): Reordered abroad patterns. Specific patterns
+            // (hospital/jail/prison) tried first so adjective forms like
+            // "In a Chinese hospital" capture only "Chinese", not the whole
+            // tail. matchAbroad handles the adjective→country mapping.
             const abroadPatterns = [
-              /^in\s+(?:a\s+)?([a-z]+(?:\s+[a-z]+){0,2})/i,
-              /^visiting\s+(.+?)(?:\s+for\s|$)/i,
-              /^abroad in\s+(.+?)(?:\s+for\s|$)/i,
-              /hospitali[sz]ed in\s+(.+?)(?:\s+for\s|$)/i,
-              /serving time in\s+(?:a\s+)?(.+?)(?:\s+(?:jail|prison)|\s+for\s|$)/i,
-              /\bin\s+(?:a\s+)?([a-z]+(?:\s+[a-z]+){0,2})\s+(?:hospital|jail|prison)/i,
+              // Adjective form: "In a Chinese hospital", "In a South African jail"
+              /\bin\s+(?:a\s+)?([a-z]+(?:\s+[a-z]+)?)\s+(?:hospital|jail|prison)/i,
+              // "Hospitalised in <place>"
+              /hospitali[sz]ed in\s+(?:a\s+)?([a-z]+(?:\s+[a-z]+)?)/i,
+              // "Serving time in <place>"
+              /serving time in\s+(?:a\s+)?([a-z]+(?:\s+[a-z]+)?)/i,
+              // "Visiting <place>"
+              /^visiting\s+([a-z]+(?:\s+[a-z]+){0,2}?)(?:\s+for\s|$)/i,
+              // "Abroad in <place>"
+              /^abroad in\s+([a-z]+(?:\s+[a-z]+){0,2}?)(?:\s+for\s|$)/i,
+              // Generic "In UAE", "In South Africa" — fallback, tried last
+              /^in\s+(?:a\s+)?([a-z]+(?:\s+[a-z]+){0,2}?)(?:\s+for\s|$)/i,
             ];
             for (const pat of abroadPatterns) {
               const aM = desc.match(pat);
               if (aM) {
-                const abDest = matchDest(aM[1].trim());
+                const abDest = matchAbroad(aM[1].trim());
                 if (abDest && abDest !== 'torn') {
                   factionAbroad[memberId] = { name: membName, dest: abDest };
                 }
@@ -1696,7 +1699,7 @@ ${dots}
   }
 
   /* ─────────────────────────────────────────────────────────────
-     TORN PAGE DETECTION
+     TORN PAGE DETECTION  (Fix 3: added matchAbroad + nationality map)
   ───────────────────────────────────────────────────────────── */
 
   const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -1712,6 +1715,40 @@ ${dots}
       if (nl && (t.includes(nl) || nl.includes(t))) return k;
     }
     return null;
+  }
+
+  // FIX 3 (v70.3.0): Adjective forms of country names — for parsing status
+  // descriptions like "In a Chinese hospital", "In a British jail",
+  // "In a South African prison". Multi-word adjectives (e.g. "south african")
+  // handled via substring match in matchAbroad.
+  const NATIONALITY_TO_DEST = {
+    mexican: 'mexico',
+    caymanian: 'caymans',
+    canadian: 'canada',
+    hawaiian: 'hawaii',
+    british: 'uk',
+    english: 'uk',
+    scottish: 'uk',
+    welsh: 'uk',
+    irish: 'uk',
+    argentine: 'argentina',
+    argentinian: 'argentina',
+    swiss: 'switzerland',
+    japanese: 'japan',
+    chinese: 'china',
+    emirati: 'uae',
+    'south african': 'southafrica',
+  };
+
+  function matchAbroad(text) {
+    if (!text) return null;
+    const t = text.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (NATIONALITY_TO_DEST[t]) return NATIONALITY_TO_DEST[t];
+    // Substring match for multi-word adjectives buried in longer phrases
+    for (const adj of Object.keys(NATIONALITY_TO_DEST)) {
+      if (t.includes(adj)) return NATIONALITY_TO_DEST[adj];
+    }
+    return matchDest(text);
   }
 
   function matchTicket(text) {
