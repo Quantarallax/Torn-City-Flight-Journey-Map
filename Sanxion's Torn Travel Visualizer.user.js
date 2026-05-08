@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      63.0.0
+// @version      64.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -618,21 +618,20 @@ ${dots}
   <polygon points="0,-1.5 -5,1.5 -4.5,2.5 0,0.5 4.5,2.5 5,1.5" fill="white" stroke="black" stroke-width="0.7"/>
   <polygon points="0,2.5 -2,4 -1.5,4.5 0,3.25 1.5,4.5 2,4" fill="white" stroke="black" stroke-width="0.6"/>`;
     } else {
-      // Single-prop (Cessna-style): fuselage, swept-back wings, tail fin, oval prop disc at nose.
-      // Nose at TOP (y=-4); tail at bottom (y=+4). With rotAngle=ang+90, nose faces direction of travel.
-      // Wings are swept-back (narrow at front, wide at rear) so direction is visually unambiguous.
+      // Original single-prop shape. The visual 'front' appears at the bottom (tail fins look like nose).
+      // Rotation adds +180 so the visual front aligns with direction of travel.
       svgShape = `
-  <ellipse cx="0" cy="0" rx="1" ry="4" fill="white" stroke="black" stroke-width="0.8"/>
-  <polygon points="0,-0.5 -5,1.5 -4.5,2.5 0,0.5 4.5,2.5 5,1.5" fill="white" stroke="black" stroke-width="0.7"/>
-  <polygon points="0,2.5 -1.5,3.5 -1,4 0,3 1,4 1.5,3.5" fill="white" stroke="black" stroke-width="0.6"/>
-  <ellipse cx="0" cy="-4" rx="2.5" ry="0.8" fill="white" stroke="black" stroke-width="0.9"/>`;
+  <ellipse cx="0" cy="0.5" rx="1" ry="3.5" fill="white" stroke="black" stroke-width="0.8"/>
+  <polygon points="-4.5,-0.5 -4,0.5 4,0.5 4.5,-0.5" fill="white" stroke="black" stroke-width="0.7"/>
+  <polygon points="0,2.5 -1.5,4 -1,4.5 0,3.25 1,4.5 1.5,4" fill="white" stroke="black" stroke-width="0.6"/>
+  <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="black" stroke-width="1.2" stroke-linecap="round"/>`;
     }
 
     // Rotation: bAng gives tangent angle where 0°=right, 90°=down (SVG convention).
     // The plane nose points up (-y = -90°). Adding 90° corrects nose alignment with travel direction.
     // prop_plane shape has its tail at top, so add extra 180° to flip it to face forward.
-    // Nose at top (-y) for all shapes; ang+90 aligns nose with travel direction
-    const rotAngle = ang + 90;
+    // prop_plane visual front is at its geometric bottom; +180 corrects the orientation
+    const rotAngle = (plane === 'prop_plane') ? (ang + 90 + 180) : (ang + 90);
 
     g.innerHTML = `<g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${rotAngle.toFixed(1)}) scale(${scale})">
   <g filter="url(#gl)">${svgShape}
@@ -1120,7 +1119,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 63.0.0</p>
+    <p class="ver-t">Version 64.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1419,14 +1418,27 @@ ${dots}
     if (!g) return;
     if (!factionFlightsOn) { g.innerHTML = ''; return; }
     const now = Date.now();
+    // Pre-build route groups for same-route spreading
+    const routeGroups = {};
+    for (const [rid, rm] of Object.entries(factionData)) {
+      const rk = [rm.src, rm.dst].sort().join('_');
+      if (!routeGroups[rk]) routeGroups[rk] = [];
+      routeGroups[rk].push(rid);
+    }
     let html = '';
-    for (const [, m] of Object.entries(factionData)) {
+    for (const [fid, m] of Object.entries(factionData)) {
       const sk = m.src, dk = m.dst;
       if (!sk || !dk || sk === dk || !DESTS[sk] || !DESTS[dk]) continue;
       const total = m.arrTime - m.depTime;
-      if (total <= 0) continue;
-      const elapsed = now - m.depTime;
-      const progress = Math.min(1, Math.max(0, elapsed / total));
+      // total<=0 when exact times not yet fetched (arrTime still 0); use midpoint until data arrives
+      let progress;
+      if (total > 0) {
+        progress = Math.min(1, Math.max(0, (now - m.depTime) / total));
+      } else if (m.arrTime === 0) {
+        progress = 0.5; // midpoint placeholder until user/travel call completes
+      } else {
+        continue; // flight has ended
+      }
       const bez = buildBez(sk, dk);
       if (!bez) continue;
       const pts = [];
@@ -1434,7 +1446,12 @@ ${dots}
         const p = bPt(i / 60, bez.s, bez.c, bez.d);
         pts.push(`${p.x.toFixed(1)},${p.y.toFixed(1)}`);
       }
-      const t = Math.max(0.001, Math.min(0.999, progress));
+      // Spread members on same route so planes don't overlap
+      const rk2 = [sk, dk].sort().join('_');
+      const grp = routeGroups[rk2] || [fid];
+      const grpIdx = grp.indexOf(fid);
+      const spread = grp.length > 1 ? (grpIdx - (grp.length - 1) / 2) * 0.08 : 0;
+      const t = Math.max(0.001, Math.min(0.999, progress + spread));
       const pos = bPt(t, bez.s, bez.c, bez.d);
       const ang = bAng(t, bez.s, bez.c, bez.d) + 90;
       // In faction view, currentZoom=1 (full world), so no zoom compensation needed
@@ -1457,8 +1474,9 @@ ${dots}
   <polygon points="0,2.5 -1.5,4 -1,4.5 0,3.25 1,4.5 1.5,4" fill="#aaa" stroke="#666" stroke-width="0.6"/>
   <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="#666" stroke-width="1.2" stroke-linecap="round"/>`;
       }
+      const fAng = (plane === 'prop_plane') ? (ang + 180) : ang;
       html += `<polyline points="${pts.join(' ')}" fill="none" stroke="#888" stroke-width="${sw}" stroke-dasharray="10,6" opacity="0.45"/>
-<g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${ang.toFixed(1)}) scale(${sc})" opacity="0.7">${shape}</g>
+<g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${fAng.toFixed(1)}) scale(${sc})" opacity="0.7">${shape}</g>
 <text x="${(pos.x + 4).toFixed(1)}" y="${(pos.y - 3).toFixed(1)}" fill="#999" font-size="7" font-family="monospace" opacity="0.8">${m.name}</text>`;
     }
     g.innerHTML = html;
@@ -1581,6 +1599,18 @@ ${dots}
                 } catch(eu) {}
               },
             });
+          }
+          // Also add the player themselves if currently flying
+          if (S.flying && S.src && S.dst && S.player && S.arrTime > Date.now()) {
+            const selfKey = 'self_' + (S.player || 'me');
+            factionData[selfKey] = {
+              name: S.player,
+              src: S.src,
+              dst: S.dst,
+              depTime: S.depTime || (Date.now() - 3600000),
+              arrTime: S.arrTime,
+              method: TICKETS[S.ticket]?.label || 'Standard'
+            };
           }
           drawFactionFlights();
           zoomToFitFaction();
