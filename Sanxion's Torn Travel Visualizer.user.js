@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      53.0.0
+// @version      54.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1085,39 +1085,39 @@ ${dots}
 
   <div id="tcfv-set" class="tcfv-pg" style="display:none">
     <h3>&#9881; API Settings</h3>
-    <p>An <strong>API key</strong> lets the visualiser read live flight data from Torn City servers.</p>
-    <p>To get a key: <strong>Torn City</strong> &rarr; <strong>Preferences</strong> &rarr; <strong>API Keys</strong> tab &rarr; create or edit a key.</p>
+    <p style="color:#b8d4ee">An <strong>API key</strong> lets the visualiser read live flight data from Torn City servers.</p>
+    <p style="color:#b8d4ee">To get a key: <strong style="color:#fff">Torn City</strong> &rarr; <strong style="color:#fff">Preferences</strong> &rarr; <strong style="color:#fff">API Keys</strong> tab &rarr; create or edit a key.</p>
     <table style="width:100%;font-size:10px;border-collapse:collapse;margin:6px 0 10px">
       <tr style="color:#5af;border-bottom:1px solid #1e3d5c">
         <th style="text-align:left;padding:2px 4px">Feature</th>
         <th style="text-align:left;padding:2px 4px">Permission needed</th>
         <th style="text-align:left;padding:2px 4px">Key level</th>
       </tr>
-      <tr>
+      <tr style="color:#b8d4ee">
         <td style="padding:2px 4px">Flight detection &amp; player name</td>
         <td style="padding:2px 4px">User: Basic, Travel</td>
         <td style="padding:2px 4px;color:#44ff88">Minimal</td>
       </tr>
-      <tr>
+      <tr style="color:#b8d4ee">
         <td style="padding:2px 4px">Faction Flights (F button)</td>
         <td style="padding:2px 4px">Faction: Basic, Travel</td>
         <td style="padding:2px 4px;color:#ffcc44">Limited</td>
       </tr>
     </table>
-    <label for="tcfv-api-inp">API Key</label><br>
+    <label for="tcfv-api-inp" style="color:#b8d4ee">API Key</label><br>
     <input id="tcfv-api-inp" type="password" placeholder="Paste your Torn API key here" autocomplete="off" spellcheck="false">
     <br><br>
     <button class="tcfv-btn" id="tcfv-api-save">&#128190; Save Key</button>
     <button class="tcfv-btn" id="tcfv-api-test">&#128279; Test Connection</button>
     <p id="tcfv-api-msg"></p>
     <hr>
-    <p class="note">Your key is stored locally in Tampermonkey's secure storage and only ever sent to api.torn.com.</p>
+    <p class="note" style="color:#7a9ab8">Your key is stored locally in Tampermonkey's secure storage and only ever sent to api.torn.com.</p>
   </div>
 
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 53.0.0</p>
+    <p class="ver-t">Version 54.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1496,23 +1496,18 @@ ${dots}
     // Fetch travel + members in one call for full roster
     GM_xmlhttpRequest({
       method: 'GET',
-      url: `https://api.torn.com/faction/?selections=travel,members&key=${S.apiKey}`,
+      url: `https://api.torn.com/faction/?selections=travel&key=${S.apiKey}`,
       onload: r => {
         try {
           const data = JSON.parse(r.responseText);
           if (data.error) {
             if (el.log && factionFlightsOn) {
-              el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API error: ' + (data.error.error || data.error) + '. Your API key needs <em>Faction: Basic &amp; Travel</em> permission enabled (Torn &rarr; Preferences &rarr; API Keys).</div>';
+              el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API error — check api key: ' + (data.error.error || data.error) + '. Enable <em>Faction: Basic &amp; Travel</em> in Torn &rarr; Preferences &rarr; API Keys.</div>';
             }
             return;
           }
-          // Parse all members for roster
-          factionAllMembers = {};
-          const members = data.members || {};
-          for (const [id, m] of Object.entries(members)) {
-            factionAllMembers[id] = { id, name: m.name || ('ID' + id) };
-          }
-          // Parse travelling members
+          // Parse travelling members first (this call is travel-only)
+          factionAllMembers = {}; // will be populated by second call below
           // The travel object may have: destination (country name), departed, timestamp, method, name
           const travel = data.travel || {};
           factionData = {};
@@ -1553,16 +1548,33 @@ ${dots}
             }
           }
           drawFactionFlights();
-          renderFactionRoster();
+          renderFactionRoster(); // renders with available data first
+          // Second call: fetch all members for the full roster
+          GM_xmlhttpRequest({
+            method: 'GET',
+            url: `https://api.torn.com/faction/?selections=members&key=${S.apiKey}`,
+            onload: r2 => {
+              try {
+                const d2 = JSON.parse(r2.responseText);
+                if (!d2.error) {
+                  factionAllMembers = {};
+                  for (const [id, m] of Object.entries(d2.members || {})) {
+                    factionAllMembers[id] = { id, name: m.name || ('ID' + id) };
+                  }
+                  renderFactionRoster(); // re-render with full roster
+                }
+              } catch(e2) {}
+            },
+          });
         } catch(e) {
           if (el.log && factionFlightsOn) {
-            el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API parse error.</div>';
+            el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API parse error — check api key permissions.</div>';
           }
         }
       },
       onerror: () => {
         if (el.log && factionFlightsOn) {
-          el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API request failed.</div>';
+          el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API request failed — check api key and network.</div>';
         }
       },
     });
