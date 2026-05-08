@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      61.0.0
+// @version      62.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -618,18 +618,21 @@ ${dots}
   <polygon points="0,-1.5 -5,1.5 -4.5,2.5 0,0.5 4.5,2.5 5,1.5" fill="white" stroke="black" stroke-width="0.7"/>
   <polygon points="0,2.5 -2,4 -1.5,4.5 0,3.25 1.5,4.5 2,4" fill="white" stroke="black" stroke-width="0.6"/>`;
     } else {
-      // Single-prop: straight wings, prop crossbar at nose
+      // Single-prop (Cessna-style): fuselage, swept-back wings, tail fin, oval prop disc at nose.
+      // Nose at TOP (y=-4); tail at bottom (y=+4). With rotAngle=ang+90, nose faces direction of travel.
+      // Wings are swept-back (narrow at front, wide at rear) so direction is visually unambiguous.
       svgShape = `
-  <ellipse cx="0" cy="0.5" rx="1" ry="3.5" fill="white" stroke="black" stroke-width="0.8"/>
-  <polygon points="-4.5,-0.5 -4,0.5 4,0.5 4.5,-0.5" fill="white" stroke="black" stroke-width="0.7"/>
-  <polygon points="0,2.5 -1.5,4 -1,4.5 0,3.25 1,4.5 1.5,4" fill="white" stroke="black" stroke-width="0.6"/>
-  <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="black" stroke-width="1.2" stroke-linecap="round"/>`;
+  <ellipse cx="0" cy="0" rx="1" ry="4" fill="white" stroke="black" stroke-width="0.8"/>
+  <polygon points="0,-0.5 -5,1.5 -4.5,2.5 0,0.5 4.5,2.5 5,1.5" fill="white" stroke="black" stroke-width="0.7"/>
+  <polygon points="0,2.5 -1.5,3.5 -1,4 0,3 1,4 1.5,3.5" fill="white" stroke="black" stroke-width="0.6"/>
+  <ellipse cx="0" cy="-4" rx="2.5" ry="0.8" fill="white" stroke="black" stroke-width="0.9"/>`;
     }
 
     // Rotation: bAng gives tangent angle where 0°=right, 90°=down (SVG convention).
     // The plane nose points up (-y = -90°). Adding 90° corrects nose alignment with travel direction.
     // prop_plane shape has its tail at top, so add extra 180° to flip it to face forward.
-    const rotAngle = (plane === 'prop_plane') ? (ang + 90 + 180) : (ang + 90);
+    // Nose at top (-y) for all shapes; ang+90 aligns nose with travel direction
+    const rotAngle = ang + 90;
 
     g.innerHTML = `<g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${rotAngle.toFixed(1)}) scale(${scale})">
   <g filter="url(#gl)">${svgShape}
@@ -828,9 +831,11 @@ ${dots}
     // Read full page text once — used by both hospital and race checks
     const bodyText = document.body ? (document.body.textContent || '') : '';
 
-    // Hospital check — show NO FLYING ALLOWED if player is in hospital
-    const HOSP_STRING = 'This page is not available while in hospital';
-    const inHospitalNow = bodyText.includes(HOSP_STRING);
+    // Hospital check — show NO FLYING ALLOWED if player is in hospital.
+    // Use both bodyText and documentElement.textContent to catch SPA-rendered content.
+    const HOSP_STRING = 'not available while in hospital';
+    const bodyAll = (document.documentElement ? document.documentElement.textContent : '') || bodyText;
+    const inHospitalNow = bodyAll.includes(HOSP_STRING);
     if (inHospitalNow) {
       if (!S.inHospital) {
         S.inHospital = true;
@@ -1051,10 +1056,10 @@ ${dots}
   <span id="tcfv-title">&#9992;&nbsp;TORN CITY FLIGHT VISUALISER</span>
   <div id="tcfv-hbtns">
     <button class="thb ta" id="thb-main" title="Flight View">&#9992;</button>
+    <button class="thb" id="thb-faction" title="Faction Flights"><b style="font-style:normal;font-size:11px">F</b></button>
     <button class="thb" id="thb-diag" title="Diagnostics">&#9874;</button>
     <button class="thb" id="thb-set" title="API Settings">&#9881;</button>
     <button class="thb" id="thb-more" title="General Setting">&#9965;</button>
-    <button class="thb" id="thb-faction" title="Faction Flights"><b style="font-style:normal;font-size:11px">F</b></button>
     <button class="thb" id="thb-radar" title="Overlay">&#9685;</button>
     <button class="thb" id="thb-cred" title="Credits">&#9733;</button>
     <button class="thb" id="thb-min" title="Minimise">&#8212;</button>
@@ -1116,7 +1121,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 61.0.0</p>
+    <p class="ver-t">Version 62.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1486,7 +1491,7 @@ ${dots}
       const planeIcon = isSmall
         ? '<svg width="14" height="14" viewBox="-6 -6 12 12"><ellipse cx="0" cy="0" rx="1" ry="3.5" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="-4,-0.3 -3.5,0.5 3.5,0.5 4,-0.3" fill="#aaa" stroke="#666" stroke-width="0.5"/><line x1="-1.2" y1="3.5" x2="1.2" y2="3.5" stroke="#aaa" stroke-width="0.9"/></svg>'
         : '<svg width="14" height="14" viewBox="-7 -7 14 14"><ellipse cx="0" cy="0" rx="1.5" ry="4" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,-1.5 -6,1 -5.5,2 0,-0.2 5.5,2 6,1" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,2.5 -2,4 -1.5,4.5 0,3.5 1.5,4.5 2,4" fill="#aaa" stroke="#666" stroke-width="0.5"/></svg>';
-      html += `<div class="tl tln" style="color:#88ddff;font-size:10px">${planeIcon} ${colW(m.name, 64)}${colW(srcCity + '\u2192' + dstCity, 100)}${timeStr}</div>`;
+      html += `<div class="tl tln" style="color:#88ddff;font-size:10px;line-height:16px"><span style="vertical-align:middle">${planeIcon}</span> ${colW(m.name + ' ', 68)}${colW(srcCity + '→' + dstCity, 102)}  ${timeStr}</div>`;
     }
     // Non-flying members alphabetically
     const flyingIds = new Set(Object.keys(factionData));
@@ -1654,6 +1659,14 @@ ${dots}
         factionFlightsOn = false;
         return;
       }
+      // Ensure main map panel is visible (faction overlays the map view)
+      if (el.pgMain) el.pgMain.style.display = 'flex';
+      if (el.pgSet)  el.pgSet.style.display  = 'none';
+      if (el.pgCred) el.pgCred.style.display = 'none';
+      if (el.pgMore) el.pgMore.style.display = 'none';
+      if (el.pgDiag) el.pgDiag.style.display = 'none';
+      S.page = 'main';
+      document.querySelectorAll('.thb').forEach(b => b.classList.remove('ta'));
       btn?.classList.add('ta');
       // Save player's current viewBox and zoom, then zoom to fit faction flyers
       if (el.svg) {
