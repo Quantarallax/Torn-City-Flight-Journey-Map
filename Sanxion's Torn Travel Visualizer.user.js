@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.1.0
+// @version      70.2.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -92,8 +92,6 @@
      No duplicates — each phase fires exactly once per flight.
   ───────────────────────────────────────────────────────────── */
 
-  // ── INFLIGHT POOLS — split by plane size ──────────────────────
-  // Fixed messages always shown at start of inflight phase
   const INFLIGHT_FIXED_START_LARGE = [
     p => `Levelling off at ${p.maxAlt.toLocaleString()} feet. Weather good. All clear.`,
     () => 'Seatbelt sign has been turned off.',
@@ -103,12 +101,10 @@
     p => `Levelling off at ${p.maxAlt.toLocaleString()} feet. Weather good. All clear.`,
     () => 'A jet flies past, upside down.',
   ];
-  // Fixed messages always shown at end of inflight phase
   const INFLIGHT_FIXED_END = [
     p => `Cruising at ${p.speed} mph. Estimated arrival: ${p.eta}.`,
     p => `Arrival time about ${p.arrivalTime}.`,
   ];
-  // Random pool for large planes — subset picked each flight
   const INFLIGHT_RANDOM_LARGE = [
     () => 'A baby starts crying across the aisle.',
     () => 'Another small plane flies past, the pilot lunatic eyed and looking crazy.',
@@ -126,7 +122,6 @@
     () => 'ATC stand by, unsure of error reason.',
     () => 'A jet flies past upside down — turbulence rocks the plane.',
   ];
-  // Random pool for small planes — subset picked each flight
   const INFLIGHT_RANDOM_SMALL = [
     () => 'Up here, the sun shines brightly.',
     () => 'The engine hums steadily.',
@@ -137,7 +132,6 @@
     () => `ATC, this is flight ${rndFlightNum()}, autopilot engaged.`,
   ];
 
-  // Helper — returns the right commentary array based on plane size
   const isSmallPlane = () => TICKETS[S.ticket]?.size === 'small';
 
   const COMMENTARY = {
@@ -211,8 +205,6 @@
     ],
   };
 
-  // Get commentary for size-dependent phases
-  // Null entries in arrived are filtered (e.g. 'Right, back to business' only for Torn City)
   function getComm(phase, small) {
     const key = `${phase}_${small ? 'small' : 'large'}`;
     const arr = COMMENTARY[key] || COMMENTARY[phase] || [];
@@ -307,7 +299,6 @@
     return 'arrived';
   };
 
-  // timeLeftMs optional — when supplied, altitude drops to 0 at 60s before landing
   const getAlt = (p, timeLeftMs) => {
     const maxAlt = TICKETS[S.ticket]?.maxAlt || 32000;
     if (!S.flying || p <= 0) return 0;
@@ -334,40 +325,33 @@
   };
 
   /* ─────────────────────────────────────────────────────────────
-     MAP VIEWPORT ZOOM — zooms SVG viewBox to frame the route
+     MAP VIEWPORT ZOOM
   ───────────────────────────────────────────────────────────── */
 
   function getZoomedViewBox(sk, dk) {
     if (!sk || !dk) return `0 0 ${MAP_W} ${MAP_H}`;
     const s = toXY(DESTS[sk].lon, DESTS[sk].lat);
     const d = toXY(DESTS[dk].lon, DESTS[dk].lat);
-
-    // Scale padding to route length so short routes zoom in closer
     const routeW = Math.abs(d.x - s.x);
     const routeH = Math.abs(d.y - s.y);
     const routeSpan = Math.sqrt(routeW * routeW + routeH * routeH);
-    // Minimum span of 120px so very close routes still zoom in tightly
     const minSpan = 120;
     const effectiveSpan = Math.max(routeSpan, minSpan);
     const pad = Math.max(40, effectiveSpan * 0.35);
-
     let minX = Math.min(s.x, d.x) - pad;
     let maxX = Math.max(s.x, d.x) + pad;
     let minY = Math.min(s.y, d.y) - pad;
     let maxY = Math.max(s.y, d.y) + pad;
-    // Clamp to map bounds
     minX = Math.max(0, minX);
     minY = Math.max(0, minY);
     maxX = Math.min(MAP_W, maxX);
     maxY = Math.min(MAP_H, maxY);
-    // Enforce minimum viewbox so dots are readable
     const MIN_VW = 160;
     if (maxX - minX < MIN_VW) {
       const cx = (minX + maxX) / 2;
       minX = Math.max(0, cx - MIN_VW / 2);
       maxX = Math.min(MAP_W, cx + MIN_VW / 2);
     }
-    // Maintain 2:1 aspect ratio
     const vw = maxX - minX, vh = maxY - minY;
     if (vw / vh < 2) {
       const extra = (vh * 2 - vw) / 2;
@@ -378,7 +362,7 @@
   }
 
   /* ─────────────────────────────────────────────────────────────
-     SVG WORLD MAP  (detailed coastline polygons, equirectangular)
+     SVG WORLD MAP
   ───────────────────────────────────────────────────────────── */
 
   function buildMapSVG() {
@@ -413,83 +397,50 @@
   </marker>
 </defs>
 <rect width="${MAP_W}" height="${MAP_H}" fill="url(#og)"/>
-<!-- Graticule -->
 <line x1="0" y1="${((90/180)*MAP_H).toFixed(0)}" x2="${MAP_W}" y2="${((90/180)*MAP_H).toFixed(0)}" stroke="#0d2035" stroke-width="1"/>
 <line x1="${(MAP_W/2).toFixed(0)}" y1="0" x2="${(MAP_W/2).toFixed(0)}" y2="${MAP_H}" stroke="#0d2035" stroke-width="0.6"/>
 <line x1="0" y1="${((66.5/180)*MAP_H).toFixed(0)}" x2="${MAP_W}" y2="${((66.5/180)*MAP_H).toFixed(0)}" stroke="#0c2a18" stroke-width="0.6" stroke-dasharray="6,6"/>
 <line x1="0" y1="${((113.5/180)*MAP_H).toFixed(0)}" x2="${MAP_W}" y2="${((113.5/180)*MAP_H).toFixed(0)}" stroke="#0c2a18" stroke-width="0.6" stroke-dasharray="6,6"/>
-<!-- ── NORTH AMERICA ── -->
 <polygon points="130,64 171,41 253,34 306,36 349,45 388,65 391,89 376,114 360,137 370,170 348,208 318,235 289,255 260,272 232,260 203,235 175,215 149,185 130,143 119,105" fill="#1a4418" stroke="#2a6030" stroke-width="1.2"/>
-<!-- Alaska -->
 <polygon points="34,64 87,47 114,59 107,82 67,91 29,81" fill="#1a4418" stroke="#2a6030" stroke-width="0.8"/>
-<!-- Aleutians (simplified) -->
 <ellipse cx="20" cy="105" rx="18" ry="4" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
-<!-- Greenland -->
 <polygon points="334,23 383,15 411,33 398,64 352,71 329,51" fill="#22503a" stroke="#2e6c40" stroke-width="0.8"/>
-<!-- Baja + Central America -->
 <polygon points="170,174 193,196 185,238 165,254 148,225 163,190" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
 <polygon points="218,235 253,258 246,279 228,285 204,266 200,245" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
-<!-- Caribbean islands -->
 <ellipse cx="294" cy="240" rx="17" ry="7" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
 <ellipse cx="256" cy="248" rx="7" ry="4" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
-<!-- ── SOUTH AMERICA ── -->
 <polygon points="237,254 280,242 338,249 373,277 385,326 367,380 338,412 296,420 261,398 242,350 234,303" fill="#1a4418" stroke="#2a6030" stroke-width="1.2"/>
 <polygon points="237,254 266,244 271,262 251,269 234,264" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
-<!-- Falkland Islands -->
 <ellipse cx="289" cy="415" rx="9" ry="5" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
-<!-- ── EUROPE ── -->
 <polygon points="444,60 483,46 530,41 573,50 602,64 608,84 587,101 556,111 516,107 480,97 447,82" fill="#1a4418" stroke="#2a6030" stroke-width="1"/>
 <polygon points="444,82 481,77 484,115 461,129 435,110" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
-<!-- Scandinavia -->
 <polygon points="491,42 523,28 561,34 570,50 548,60 506,58" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
-<!-- British Isles -->
 <polygon points="454,67 482,60 489,80 474,88 452,81" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
 <ellipse cx="462" cy="58" rx="10" ry="6" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
-<!-- Italy -->
 <polygon points="519,101 539,95 545,116 536,138 521,141 513,123" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
-<!-- Iberian Peninsula -->
 <polygon points="444,82 480,76 486,116 461,129 434,111" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
-<!-- Greece -->
 <polygon points="573,102 590,97 588,115 574,118 565,109" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
-<!-- ── AFRICA ── -->
 <polygon points="470,143 524,131 602,130 659,155 683,200 666,257 628,302 587,335 540,351 496,325 469,283 462,236 469,188" fill="#1a4418" stroke="#2a6030" stroke-width="1.2"/>
-<!-- Horn of Africa -->
 <polygon points="659,207 689,199 695,228 668,237 649,222" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
-<!-- Madagascar -->
 <polygon points="622,294 643,285 651,317 634,330 614,313" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
-<!-- ── MIDDLE EAST ── -->
 <polygon points="590,139 671,130 713,148 723,193 692,217 642,210 604,185" fill="#1a4418" stroke="#2a6030" stroke-width="0.8"/>
-<!-- Turkey -->
 <polygon points="578,103 647,94 668,109 663,129 598,136 572,120" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
-<!-- ── ASIA ── -->
 <polygon points="575,46 697,29 822,33 905,50 933,90 928,131 892,156 875,178 834,189 780,185 740,148 694,140 639,145 614,136 584,119 578,88" fill="#1a4418" stroke="#2a6030" stroke-width="1.2"/>
-<!-- Indian Subcontinent -->
 <polygon points="656,147 722,140 750,162 745,231 710,248 676,229 649,190" fill="#1a4418" stroke="#2a6030" stroke-width="0.7"/>
 <ellipse cx="744" cy="246" rx="8" ry="11" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
-<!-- SE Asia / Indochina -->
 <polygon points="736,148 793,139 820,164 797,197 757,201 736,178" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
-<!-- Malaysia / Indonesia (simplified) -->
 <polygon points="793,202 832,192 848,210 826,225 798,218" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
 <polygon points="836,220 877,215 890,234 862,244 838,235" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
-<!-- Japan -->
 <polygon points="869,113 892,107 906,132 891,152 872,145" fill="#1a4418" stroke="#2a6030" stroke-width="0.6"/>
 <polygon points="888,96 907,91 918,110 904,118 887,112" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
-<!-- Korean Peninsula -->
 <polygon points="841,115 858,109 862,133 848,139 837,128" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
-<!-- Taiwan -->
 <polygon points="839,181 850,175 855,192 845,198" fill="#1a4418" stroke="#2a6030" stroke-width="0.3"/>
-<!-- Philippines (simplified) -->
 <ellipse cx="862" cy="196" rx="9" ry="14" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
-<!-- ── AUSTRALIA ── -->
 <polygon points="782,285 875,264 933,286 941,334 904,361 851,375 789,350 770,313" fill="#1a4418" stroke="#2a6030" stroke-width="1.2"/>
-<!-- Tasmania -->
 <ellipse cx="875" cy="380" rx="12" ry="10" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
-<!-- New Zealand -->
 <polygon points="934,338 952,328 958,352 945,362 930,353" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
 <polygon points="940,364 955,357 962,378 950,388 936,377" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
-<!-- ── ANTARCTICA ── -->
 <rect x="0" y="${MAP_H - 24}" width="${MAP_W}" height="24" fill="#1a3a26" opacity="0.7"/>
-<!-- Dynamic layers (drawn on top of land) -->
 <g id="tcfv-factiong"></g>
 <g id="tcfv-pathg"></g>
 ${dots}
@@ -502,13 +453,11 @@ ${dots}
 
   let dashAnimId = null;
   let dashOffset = 0;
-  let currentZoom = 1; // ratio: viewBox width / MAP_W — >1 = zoomed in
+  let currentZoom = 1;
 
   function startDashAnim() {
     if (dashAnimId) cancelAnimationFrame(dashAnimId);
     const step = () => {
-      // Modulo must match actual dash total in SVG units (20/currentZoom) so there's no jump.
-      // Increment also scaled so visual animation speed stays constant regardless of zoom.
       const dashTotal = 20 / currentZoom;
       const inc = 0.4 / currentZoom;
       dashOffset = (dashOffset + inc) % dashTotal;
@@ -523,7 +472,6 @@ ${dots}
     if (dashAnimId) { cancelAnimationFrame(dashAnimId); dashAnimId = null; }
   }
 
-  // Pre-computed bezier point array for current route (cached to avoid recalc every frame)
   let _pathPts = null;
   let _pathKey = '';
 
@@ -542,7 +490,7 @@ ${dots}
   }
 
   /* ─────────────────────────────────────────────────────────────
-     DRAW FLIGHT PATH  — solid trail behind plane, dashes ahead
+     DRAW FLIGHT PATH
   ───────────────────────────────────────────────────────────── */
 
   function drawPath(sk, dk) {
@@ -559,7 +507,6 @@ ${dots}
     const col = TICKETS[S.ticket]?.col || '#fff';
     const { s } = buildBez(sk, dk);
     const { d } = buildBez(sk, dk);
-    // Initially draw full path as dashes (progress=0). updatePathProgress() splits it when flying.
     g.innerHTML = `
 <polyline id="tcfv-route-trail" points="${pts[0]}" fill="none" stroke="${col}" stroke-width="${(2.2/currentZoom).toFixed(3)}" stroke-linecap="round" opacity="0.85"/>
 <polyline id="tcfv-route-ahead" points="${pts.join(' ')}" fill="none" stroke="${col}" stroke-width="${(2/currentZoom).toFixed(3)}" stroke-dasharray="${(12/currentZoom).toFixed(1)},${(8/currentZoom).toFixed(1)}" stroke-linecap="round" opacity="0.55"/>
@@ -568,21 +515,17 @@ ${dots}
     startDashAnim();
   }
 
-  // Called every tick to split the path at the plane's current position
   function updatePathProgress(progress, sk, dk) {
     if (!sk || !dk || sk === dk) return;
     const trail = document.getElementById('tcfv-route-trail');
     const ahead = document.getElementById('tcfv-route-ahead');
     if (!trail || !ahead) return;
-    // Keep stroke-widths zoom-compensated so line appears same visual width
     trail.setAttribute('stroke-width', (2.2 / currentZoom).toFixed(3));
     ahead.setAttribute('stroke-width', (2 / currentZoom).toFixed(3));
     ahead.setAttribute('stroke-dasharray', `${(12/currentZoom).toFixed(1)},${(8/currentZoom).toFixed(1)}`);
     const pts = getPathPts(sk, dk);
     const N = pts.length - 1;
-    // Split index based on progress
     const splitIdx = Math.max(0, Math.min(N, Math.round(progress * N)));
-    // Trail: solid line from start to plane position
     const trailPts = pts.slice(0, splitIdx + 1);
     const aheadPts = pts.slice(splitIdx);
     if (trailPts.length >= 2) trail.setAttribute('points', trailPts.join(' '));
@@ -599,40 +542,26 @@ ${dots}
     const t = Math.max(0.001, Math.min(0.999, progress));
     const pos = bPt(t, s, c, d), ang = bAng(t, s, c, d);
     const plane = TICKETS[S.ticket]?.plane || 'jumbo';
-    // Divide scale by currentZoom so plane shrinks proportionally when map is zoomed in
     const scale = ((S.planeScale || 100) / 100) / currentZoom;
-
-    // Top-down airplane silhouette — white fill, black stroke, transparent background
-    // Sized to be smaller than the destination dots (dot-core r=3.5, dot-ring r=5.5)
     let svgShape;
     if (plane === 'jumbo') {
-      // Wide-body top-down: broad fuselage, swept wings, horizontal stabiliser
       svgShape = `
   <ellipse cx="0" cy="0" rx="1.5" ry="4.5" fill="white" stroke="black" stroke-width="0.8"/>
   <polygon points="0,-2 -6.5,1 -5.5,2 0,-0.5 5.5,2 6.5,1" fill="white" stroke="black" stroke-width="0.7"/>
   <polygon points="0,2.5 -2.5,4.5 -2,5 0,3.5 2,5 2.5,4.5" fill="white" stroke="black" stroke-width="0.6"/>`;
     } else if (plane === 'private_plane') {
-      // Slim private jet: narrow fuselage, swept wings, delta tail
       svgShape = `
   <ellipse cx="0" cy="0" rx="1" ry="4" fill="white" stroke="black" stroke-width="0.8"/>
   <polygon points="0,-1.5 -5,1.5 -4.5,2.5 0,0.5 4.5,2.5 5,1.5" fill="white" stroke="black" stroke-width="0.7"/>
   <polygon points="0,2.5 -2,4 -1.5,4.5 0,3.25 1.5,4.5 2,4" fill="white" stroke="black" stroke-width="0.6"/>`;
     } else {
-      // Original single-prop shape. The visual 'front' appears at the bottom (tail fins look like nose).
-      // Rotation adds +180 so the visual front aligns with direction of travel.
       svgShape = `
   <ellipse cx="0" cy="0.5" rx="1" ry="3.5" fill="white" stroke="black" stroke-width="0.8"/>
   <polygon points="-4.5,-0.5 -4,0.5 4,0.5 4.5,-0.5" fill="white" stroke="black" stroke-width="0.7"/>
   <polygon points="0,2.5 -1.5,4 -1,4.5 0,3.25 1,4.5 1.5,4" fill="white" stroke="black" stroke-width="0.6"/>
   <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="black" stroke-width="1.2" stroke-linecap="round"/>`;
     }
-
-    // Rotation: bAng gives tangent angle where 0°=right, 90°=down (SVG convention).
-    // The plane nose points up (-y = -90°). Adding 90° corrects nose alignment with travel direction.
-    // prop_plane shape has its tail at top, so add extra 180° to flip it to face forward.
-    // prop_plane visual front is at its geometric bottom; +180 corrects the orientation
     const rotAngle = (plane === 'prop_plane') ? (ang + 90 + 180) : (ang + 90);
-
     g.innerHTML = `<g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${rotAngle.toFixed(1)}) scale(${scale})">
   <g filter="url(#gl)">${svgShape}
   </g>
@@ -666,10 +595,6 @@ ${dots}
     }
   }
 
-  /* ─────────────────────────────────────────────────────────────
-     ELEMENT CACHE
-  ───────────────────────────────────────────────────────────── */
-
   let el = {};
 
   /* ─────────────────────────────────────────────────────────────
@@ -684,7 +609,6 @@ ${dots}
     const totalDist = src && dst ? haversine(src, dst) : 0;
     let distRem;
     if (S.flying && timeLeftMs !== undefined && timeLeftMs <= 60000 && totalDist > 0) {
-      // Smoothly interpolate from ~5 miles down to 0 over final 60 seconds
       distRem = Math.max(0, Math.round(5 * (timeLeftMs / 60000)));
     } else if (S.flying && progress > 0 && progress < 1 && totalDist > 0) {
       distRem = Math.round(totalDist * (1 - progress));
@@ -692,17 +616,14 @@ ${dots}
       distRem = totalDist;
     }
     const ph = PHASE_CFG[phase] || PHASE_CFG.ready;
-
     el.status.textContent = ph.label;
     el.status.style.color = ph.col;
     el.destname.textContent = dst ? `${dst.city}, ${dst.country}` : '—';
     el.dist.textContent = totalDist > 0 ? `${distRem.toLocaleString()} mi` : '— mi';
-
     const dstKey = S.flying ? S.dst : S.previewDst;
     const srcKey = S.src;
     const dur = (srcKey && dstKey) ? getDur(srcKey, dstKey, S.ticket) : 0;
     el.eta.textContent = S.flying && timeLeftMs > 0 ? fmtTime(timeLeftMs) : (dur > 0 ? fmtTime(dur) : '—');
-
     el.alt.textContent = `${getAlt(progress, timeLeftMs).toLocaleString()} ft`;
     el.spd.textContent = `${getSpd(progress, tkt.speed)} mph`;
     el.fuel.textContent = `${getFuel(Math.max(0, progress), S.ticket).toLocaleString()} lbs`;
@@ -710,13 +631,12 @@ ${dots}
   }
 
   /* ─────────────────────────────────────────────────────────────
-     COMMENTARY — fires once per phase, persists across refresh
+     COMMENTARY
   ───────────────────────────────────────────────────────────── */
 
   let phRunId = {};
 
   function addLog(text) {
-    // While airport is closed or in hospital, only allow status-related messages through
     if ((S.airportClosed || S.inHospital) && !text.includes('Airport') && !text.includes('hospital') && !text.includes('discharged')) return;
     S.log.push(text);
     if (S.log.length > 30) S.log.shift();
@@ -725,11 +645,9 @@ ${dots}
 
   function renderLog() {
     if (!el.log) return;
-    // On refresh during inflight, show only inflight+ messages (not takeoff/ready)
     const startIdx = (S.flying && S.inflightLogStart !== null) ? S.inflightLogStart : 0;
     const lines = S.log.slice(startIdx).slice(-8);
     el.log.innerHTML = lines.map((t, i) => {
-      // Entries prefixed with '\x01' are pre-sanitised HTML — render as-is
       const isHtml = t.startsWith('\x01');
       const content = isHtml ? t.slice(1) : t.replace(/&/g,'&amp;').replace(/</g,'&lt;');
       return `<div class="tl${i === lines.length-1 ? ' tln' : ''}">&rsaquo; ${content}</div>`;
@@ -737,9 +655,8 @@ ${dots}
     el.log.scrollTop = el.log.scrollHeight;
   }
 
-  // Fire commentary messages for a phase, staggered — only once per flight per phase
   function triggerComm(phase, params) {
-    if (S.phasesTriggered[phase]) return; // already fired this phase this flight
+    if (S.phasesTriggered[phase]) return;
     S.phasesTriggered[phase] = true;
     saveS();
     const msgs = getComm(phase, params.isSmall);
@@ -756,18 +673,11 @@ ${dots}
   }
 
   /* ─────────────────────────────────────────────────────────────
-     FLIGHT LOOP
-  ───────────────────────────────────────────────────────────── */
-
-  /* ─────────────────────────────────────────────────────────────
      INFLIGHT RANDOM SCHEDULER
-     Picks a random subset of funny messages and spaces them
-     evenly across the full inflight period. Persists to storage
-     so a page refresh shows the same messages without repeats.
   ───────────────────────────────────────────────────────────── */
 
   function buildInflightSchedule() {
-    if (S.inflightSchedule) return; // already built for this flight
+    if (S.inflightSchedule) return;
     const total = S.arrTime - S.depTime;
     const inflightStart = S.depTime + total * 0.05;
     const inflightEnd = S.depTime + total * 0.75;
@@ -775,8 +685,6 @@ ${dots}
     const small = TICKETS[S.ticket]?.size === 'small';
     const fixedStart = small ? INFLIGHT_FIXED_START_SMALL : INFLIGHT_FIXED_START_LARGE;
     const randomPool = small ? INFLIGHT_RANDOM_SMALL : INFLIGHT_RANDOM_LARGE;
-
-    // Pick 3–5 random messages from the pool (never more than pool size)
     const poolSize = randomPool.length;
     const pickCount = Math.min(poolSize, 3 + Math.floor(Math.random() * 3));
     const indices = Array.from({ length: poolSize }, (_, i) => i);
@@ -785,40 +693,33 @@ ${dots}
       [indices[i], indices[j]] = [indices[j], indices[i]];
     }
     const chosen = indices.slice(0, pickCount).sort((a, b) => a - b);
-
-    // Build schedule — fixed-start messages at beginning, random in middle, fixed-end near end
     const schedule = [];
     const fixedStartCount = fixedStart.length;
     const fixedEndCount = INFLIGHT_FIXED_END.length;
     const totalSlots = fixedStartCount + pickCount + fixedEndCount;
     const slotSize = duration / (totalSlots + 1);
-
     let slot = 1;
-    // Fixed start messages
     for (let i = 0; i < fixedStartCount; i++) {
       schedule.push({ pool:'fixed_start', idx:i, fireAt: inflightStart + slotSize * slot, fired:false });
       slot++;
     }
-    // Random pool messages
     for (const idx of chosen) {
       schedule.push({ pool:'random', idx, fireAt: inflightStart + slotSize * slot, fired:false });
       slot++;
     }
-    // Fixed end messages
     for (let i = 0; i < fixedEndCount; i++) {
       schedule.push({ pool:'fixed_end', idx:i, fireAt: inflightStart + slotSize * slot, fired:false });
       slot++;
     }
-
     S.inflightSchedule = schedule;
     saveS();
   }
 
   let loopTmr = null;
   let _noRaceCount = 0;
-  let commentaryQueue = []; // stale queue — kept for airport-closed cancellation
-  let draining = false; // stale drain flag — kept for airport-closed cancellation
-  let recentMessages = []; // recent message dedup list
+  let commentaryQueue = [];
+  let draining = false;
+  let recentMessages = [];
   let turbFired = false;
 
   function startLoop() {
@@ -827,11 +728,7 @@ ${dots}
   }
 
   function tick() {
-    // Read full page text once — used by both hospital and race checks
     const bodyText = document.body ? (document.body.textContent || '') : '';
-
-    // Hospital check — show NO FLYING ALLOWED if player is in hospital.
-    // Use both bodyText and documentElement.textContent to catch SPA-rendered content.
     const HOSP_STRING = 'not available while in hospital';
     const bodyAll = (document.documentElement ? document.documentElement.textContent : '') || bodyText;
     const inHospitalNow = bodyAll.includes(HOSP_STRING);
@@ -856,18 +753,12 @@ ${dots}
       addLog('You have been discharged from hospital.');
       saveS();
     }
-
-    // Airport closed check — runs regardless of flying state
-    // Use textContent (not innerText) — catches text in hidden/transitioning SPA elements
     const RACE_STRING = 'You are currently in a race, you must leave or wait';
     const raceTextPresent = bodyText.includes(RACE_STRING);
     if (raceTextPresent) {
       _noRaceCount = 0;
       if (!S.airportClosed) {
         S.airportClosed = true;
-        // Append airport message — keep existing commentary visible.
-        // No S.log.includes() check here — the outer !S.airportClosed gate ensures
-        // this block only runs once per closure event, enabling repeated open→close cycles.
         commentaryQueue = [];
         draining = false;
         const am = '\x01Airport closed — you are in a <a href="https://www.torn.com/page.php?sid=racing" target="_blank" style="color:#ff6666;text-decoration:underline">race</a>.';
@@ -883,7 +774,6 @@ ${dots}
       loopTmr = setTimeout(tick, 1000);
       return;
     }
-    // Race text NOT found — 1 consecutive clear tick before declaring re-opened
     if (S.airportClosed) {
       _noRaceCount = (_noRaceCount || 0) + 1;
       if (_noRaceCount >= 1) {
@@ -900,13 +790,11 @@ ${dots}
         return;
       }
     }
-
     if (!S.flying || !S.dst) {
       updateStats(0, 0);
       loopTmr = setTimeout(tick, 2000);
       return;
     }
-
     const now = Date.now();
     const total = S.arrTime - S.depTime;
     const elapsed = now - S.depTime;
@@ -914,10 +802,8 @@ ${dots}
     const timeLeft = Math.max(0, S.arrTime - now);
     const phase = getPhase(progress);
     const altNow = getAlt(progress, timeLeft);
-
     const arrDate = new Date(S.arrTime);
     const arrivalTime = `${String(arrDate.getHours()).padStart(2,'0')}:${String(arrDate.getMinutes()).padStart(2,'0')}`;
-
     const params = {
       name: S.player,
       src: DESTS[S.src]?.city || 'the airport',
@@ -929,8 +815,6 @@ ${dots}
       isTornCity: S.dst === 'torn',
       isSmall: TICKETS[S.ticket]?.size === 'small',
     };
-
-    // Phase transition commentary (fires only once per phase)
     if (phase !== S.prevPhase) {
       S.prevPhase = phase;
       if (phase !== 'landing' && phase !== 'inflight' && phase !== 'arrived') triggerComm(phase, params);
@@ -942,7 +826,6 @@ ${dots}
         }
         buildInflightSchedule();
       }
-
       if (phase === 'arrived') {
         S.phasesTriggered.arrived = true;
         const arrivedFns = COMMENTARY.arrived;
@@ -971,8 +854,6 @@ ${dots}
         return;
       }
     }
-
-    // Fire scheduled inflight messages
     if (phase === 'inflight' && S.inflightSchedule) {
       const small = TICKETS[S.ticket]?.size === 'small';
       const fixedStart = small ? INFLIGHT_FIXED_START_SMALL : INFLIGHT_FIXED_START_LARGE;
@@ -991,8 +872,6 @@ ${dots}
       }
       if (scheduleChanged) saveS();
     }
-
-    // Halfway message
     if (!S.halfwayFired && progress >= 0.5 && phase === 'inflight') {
       S.halfwayFired = true;
       const minsLeft = Math.round(timeLeft / 60000);
@@ -1017,14 +896,11 @@ ${dots}
       triggerComm('turbulence', params);
       saveS();
     }
-
-    // Screech of tyres fires when altitude hits 0 — 60 seconds before end of flight
     if (timeLeft <= 60000 && S.flying && !S.phasesTriggered.landing_screech) {
       S.phasesTriggered.landing_screech = true;
       triggerComm('landing', params);
       saveS();
     }
-
     updateStats(progress, timeLeft);
     drawPlane(progress, S.src, S.dst);
     updatePathProgress(progress, S.src, S.dst);
@@ -1040,7 +916,6 @@ ${dots}
     panel.id = 'tcfv';
     panel.style.width = S.pw + 'px';
     panel.style.height = S.ph_panel + 'px';
-
     panel.innerHTML = `
 <div id="tcfv-hdr">
   <span id="tcfv-title">&#9992;&nbsp;TORN CITY FLIGHT VISUALISER</span>
@@ -1056,7 +931,6 @@ ${dots}
   </div>
 </div>
 <div id="tcfv-bod">
-
   <div id="tcfv-main" class="tcfv-pg">
     <div id="tcfv-mapbox">
       <svg id="tcfv-svg" viewBox="0 0 ${MAP_W} ${MAP_H}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">${buildMapSVG()}</svg>
@@ -1078,7 +952,6 @@ ${dots}
       </div>
     </div>
   </div>
-
   <div id="tcfv-set" class="tcfv-pg" style="display:none">
     <h3>&#9881; API Settings</h3>
     <p style="color:#b8d4ee">An <strong>API key</strong> lets the visualiser read live flight data from Torn City servers.</p>
@@ -1106,22 +979,19 @@ ${dots}
     <hr>
     <p class="note" style="color:#7a9ab8">Your key is stored locally in Tampermonkey's secure storage and only ever sent to api.torn.com.</p>
   </div>
-
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.1.0</p>
+    <p class="ver-t">Version 70.2.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
     <p class="note">Built for the Torn City community. Not affiliated with Torn Ltd.<br>
     Flight timings, altimeter, airspeed, fuel loads and ATC commentary are approximations for entertainment purposes only.</p>
   </div>
-
   <div id="tcfv-diag" class="tcfv-pg" style="display:none">
     <div id="tcfv-diag-inner"></div>
   </div>
-
   <div id="tcfv-more" class="tcfv-pg" style="display:none">
     <h3>&#9965; General Setting</h3>
     <p>Adjust the size of the airplane image on the flight map.</p>
@@ -1144,12 +1014,9 @@ ${dots}
       </div>
     </div>
   </div>
-
 </div>
 <div id="tcfv-resize-handle" title="Drag to resize"></div>`;
-
     document.body.appendChild(panel);
-
     el = {
       panel,
       bod: panel.querySelector('#tcfv-bod'),
@@ -1169,13 +1036,10 @@ ${dots}
       pgDiag: panel.querySelector('#tcfv-diag'),
       svg: panel.querySelector('#tcfv-svg'),
     };
-
     panel.style.left = S.px + 'px';
     panel.style.top = S.py + 'px';
-
     makeDrag(panel, panel.querySelector('#tcfv-hdr'));
     makeResize(panel, panel.querySelector('#tcfv-resize-handle'));
-
     panel.querySelector('#thb-min').addEventListener('click', () => doMin(false));
     panel.querySelector('#thb-radar').addEventListener('click', doRadar);
     panel.querySelector('#thb-faction').addEventListener('click', doFaction);
@@ -1184,7 +1048,6 @@ ${dots}
     panel.querySelector('#thb-set').addEventListener('click', () => showPg('set'));
     panel.querySelector('#thb-more').addEventListener('click', () => showPg('more'));
     panel.querySelector('#thb-cred').addEventListener('click', () => showPg('cred'));
-
     const apiInp = panel.querySelector('#tcfv-api-inp');
     apiInp.value = S.apiKey || '';
     panel.querySelector('#tcfv-api-save').addEventListener('click', () => {
@@ -1195,8 +1058,6 @@ ${dots}
     panel.querySelector('#tcfv-api-test').addEventListener('click', () =>
       testApiKey(apiInp.value.trim(), panel.querySelector('#tcfv-api-msg'))
     );
-
-    // Plane size slider
     const slider = panel.querySelector('#tcfv-scale-slider');
     const scaleVal = panel.querySelector('#tcfv-scale-val');
     const previewPlane = panel.querySelector('#tcfv-preview-plane');
@@ -1241,7 +1102,9 @@ ${dots}
     saveS();
   }
 
-  // ── DIAGNOSTICS ──────────────────────────────────────────────────────────
+  /* ─────────────────────────────────────────────────────────────
+     DIAGNOSTICS
+  ───────────────────────────────────────────────────────────── */
 
   const DIAG_STATUS_COLS = { green:'#44ff88', yellow:'#ffcc44', red:'#ff4444' };
 
@@ -1366,7 +1229,7 @@ ${dots}
   }
 
   /* ─────────────────────────────────────────────────────────────
-     FACTION FLIGHTS
+     FACTION FLIGHTS  (Fix 1 + Fix 2 applied here)
   ───────────────────────────────────────────────────────────── */
 
   let factionFlightsOn = false;
@@ -1390,7 +1253,6 @@ ${dots}
     if (!g) return;
     if (!factionFlightsOn) { g.innerHTML = ''; return; }
     const now = Date.now();
-    // Pre-build route groups for same-route spreading (any direction)
     const routeGroups = {};
     for (const [rid, rm] of Object.entries(factionData)) {
       const rk = [rm.src, rm.dst].sort().join('_');
@@ -1417,18 +1279,15 @@ ${dots}
         const p = bPt(i / 60, bez.s, bez.c, bez.d);
         pts.push(`${p.x.toFixed(1)},${p.y.toFixed(1)}`);
       }
-      // FIX 1 (v70.1.0): Same-route spreading via perpendicular offset.
-      // Previous code added an offset to `progress`, which fails for opposite-
-      // direction flights because both ends of the route map to the same
-      // physical point on the bezier. A perpendicular offset to the path
-      // tangent guarantees separation regardless of direction.
+      // FIX 1 (v70.1.0): Same-route spreading via perpendicular offset to path
+      // tangent. Works for opposite-direction flights (a progress-only offset
+      // doesn't, since both ends of the route map to the same physical point).
       const rk2 = [sk, dk].sort().join('_');
       const grp = routeGroups[rk2] || [fid];
       const grpIdx = grp.indexOf(fid);
       const t = Math.max(0.001, Math.min(0.999, progress));
       const basePos = bPt(t, bez.s, bez.c, bez.d);
       const tangentDeg = bAng(t, bez.s, bez.c, bez.d);
-      // Perpendicular offset (px), evenly distributed around path centreline
       const perpDist = grp.length > 1 ? (grpIdx - (grp.length - 1) / 2) * 9 : 0;
       const perpRad = (tangentDeg + 90) * Math.PI / 180;
       const pos = {
@@ -1456,9 +1315,12 @@ ${dots}
   <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="#333" stroke-width="1.2" stroke-linecap="round"/>`;
       }
       const fAng = (plane === 'prop_plane') ? (ang + 180) : ang;
+      // FIX 2 (v70.2.0): Alternate name above/below plane (even grpIdx above,
+      // odd below). Black stroke around text gives readability on any background.
+      const lblY = (grpIdx % 2 === 0) ? (pos.y - 6) : (pos.y + 11);
       html += `<polyline points="${pts.join(' ')}" fill="none" stroke="#888" stroke-width="${sw}" stroke-dasharray="10,6" opacity="0.45"/>
 <g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${fAng.toFixed(1)}) scale(${sc})" opacity="0.7">${shape}</g>
-<text x="${(pos.x + 4).toFixed(1)}" y="${(pos.y - 3).toFixed(1)}" fill="white" font-size="8" font-family="monospace" font-weight="bold" opacity="0.9">${m.name}</text>`;
+<text x="${(pos.x + 5).toFixed(1)}" y="${lblY.toFixed(1)}" fill="white" font-size="8" font-family="monospace" font-weight="bold" opacity="0.95" stroke="#000" stroke-width="0.4" paint-order="stroke fill">${m.name}</text>`;
     }
     const abroadGroups = {};
     for (const [, mb] of Object.entries(factionAbroad)) {
@@ -1543,15 +1405,12 @@ ${dots}
           factionAllMembers = {};
           factionData = {};
           factionAbroad = {};
-
           for (const [id, m] of Object.entries(members)) {
             const memberId = String(m.id || m.player_id || id);
             const membName = m.name || ('ID' + id);
             factionAllMembers[memberId] = { id: memberId, name: membName };
-
             const st = m.status;
             const desc = (st && st.description) ? st.description : '';
-
             if (/traveling from .+ to .+/i.test(desc)) {
               const toM = desc.match(/traveling from .+ to (.+)$/i);
               const fromM = desc.match(/traveling from (.+?) to /i);
@@ -1570,7 +1429,6 @@ ${dots}
               }
               continue;
             }
-
             const abroadPatterns = [
               /^in\s+(?:a\s+)?([a-z]+(?:\s+[a-z]+){0,2})/i,
               /^visiting\s+(.+?)(?:\s+for\s|$)/i,
@@ -1590,7 +1448,6 @@ ${dots}
               }
             }
           }
-
           if (S.flying && S.src && S.dst && S.player) {
             const selfId = 'self_player';
             const alreadyIn = Object.values(factionData).some(fx => fx.name === S.player);
@@ -1603,7 +1460,6 @@ ${dots}
               };
             }
           }
-
           drawFactionFlights();
           zoomToFitFaction();
           renderFactionRoster();
@@ -1670,7 +1526,6 @@ ${dots}
     const btn = document.querySelector('#thb-faction');
     const pathg = document.getElementById('tcfv-pathg');
     const planeg = document.getElementById('tcfv-planeg');
-
     if (factionFlightsOn) {
       if (!S.apiKey) {
         addLog('API key required for Faction Flights. Add one in API Settings.');
@@ -1718,6 +1573,10 @@ ${dots}
       if (S.flying || S.previewDst) startDashAnim();
     }
   }
+
+  /* ─────────────────────────────────────────────────────────────
+     RADAR / DOMIN
+  ───────────────────────────────────────────────────────────── */
 
   const RADAR_MODES = [
     null,
@@ -1890,7 +1749,7 @@ ${dots}
   }
 
   /* ─────────────────────────────────────────────────────────────
-     HOOK — capture-phase click listener
+     HOOK CLICKS
   ───────────────────────────────────────────────────────────── */
 
   function hookClicks() {
@@ -1901,12 +1760,10 @@ ${dots}
         const txt = (t.textContent || '').trim().toLowerCase();
         const cls = (t.className || '').toString().toLowerCase();
         const id = (t.id || '').toLowerCase();
-
         if (!S.flying && (cls.includes('country') || cls.includes('destination') || cls.includes('travel') || cls.includes('city') || cls.includes('location'))) {
           const dm = matchDest(t.textContent);
           if (dm && dm !== S.src) { previewDest(dm); }
         }
-
         if (cls.includes('ticket') || cls.includes('class') || cls.includes('method') || cls.includes('airstrip')) {
           const tk = matchTicket(t.textContent);
           if (S.ticket !== tk) {
@@ -1919,7 +1776,6 @@ ${dots}
             saveS();
           }
         }
-
         if ((txt.includes('return') && (txt.includes('home') || txt.includes('torn') || txt.includes('back'))) ||
           txt === 'fly home' || txt === 'return home' || txt === 'go home' ||
           cls.includes('return') || cls.includes('fly-home') || id.includes('return') || id.includes('home')) {
@@ -1928,14 +1784,12 @@ ${dots}
             return;
           }
         }
-
         if (txt === 'fly' || txt === 'fly now' || txt === 'fly!' || txt === 'take off' ||
           cls.includes('fly-btn') || cls.includes('flybtn') || id.includes('fly') || id.includes('takeoff')) {
           const dst = readSelectedDest() || S.previewDst || S.dst;
           const tkt = readSelectedTicket() || S.ticket;
           if (dst) { startFlight(dst, tkt, S.src !== 'torn'); return; }
         }
-
         t = t.parentElement;
       }
     }, true);
@@ -1999,7 +1853,6 @@ ${dots}
           tick();
           return;
         }
-
         const tk = readSelectedTicket();
         if (tk && tk !== S.ticket) {
           S.ticket = tk;
@@ -2010,7 +1863,6 @@ ${dots}
           }
           saveS();
         }
-
         if (!S.flying) {
           const body = document.body.textContent;
           const m = body.match(/(?:travelling|traveling|flying)\s+to\s+([A-Za-z\s]{3,30})(?:[.,\n]|$)/i);
@@ -2382,11 +2234,9 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
     } else {
       injectCSS();
     }
-
     hookClicks();
     hookNetwork();
     watchDOM();
-
     if (S.flying && S.dst) {
       if (Date.now() >= S.arrTime) {
         S.flying = false; S.src = S.dst; S.dst = null;
@@ -2401,7 +2251,6 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
       if (el.svg) { const vb=getZoomedViewBox(S.src,S.previewDst); el.svg.setAttribute('viewBox',vb); currentZoom=MAP_W/parseFloat(vb.split(' ')[2]); }
       highlightDots(S.src, S.previewDst);
     }
-
     showPg(S.page || 'main');
     startLoop();
     initFromApi();
