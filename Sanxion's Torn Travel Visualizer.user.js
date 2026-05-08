@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      51.0.0
+// @version      52.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1086,7 +1086,12 @@ ${dots}
   <div id="tcfv-set" class="tcfv-pg" style="display:none">
     <h3>&#9881; API Settings</h3>
     <p>An <strong>API key</strong> lets the visualiser read your live flight data directly from the Torn City servers, giving accurate real departure and arrival times.</p>
-    <p>To get your API key: log in to Torn City &rarr; <strong>Preferences</strong> &rarr; <strong>API Keys</strong> tab &rarr; create a new key with at least <em>Public Access</em> enabled. It is a 16-character alphanumeric string.</p>
+    <p>To get your API key: log in to Torn City &rarr; <strong>Preferences</strong> &rarr; <strong>API Keys</strong> tab &rarr; create a new key. It is a 16-character alphanumeric string.</p>
+    <p><strong>Required permissions:</strong></p>
+    <ul style="margin:4px 0 8px 16px;font-size:11px;line-height:1.6">
+      <li><em>Public Access</em> — for live flight detection</li>
+      <li><em>Faction: Basic &amp; Travel</em> — for Faction Flights (F button)</li>
+    </ul>
     <label for="tcfv-api-inp">API Key</label><br>
     <input id="tcfv-api-inp" type="password" placeholder="Paste your Torn API key here" autocomplete="off" spellcheck="false">
     <br><br>
@@ -1100,7 +1105,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 51.0.0</p>
+    <p class="ver-t">Version 52.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1485,7 +1490,7 @@ ${dots}
           const data = JSON.parse(r.responseText);
           if (data.error) {
             if (el.log && factionFlightsOn) {
-              el.log.innerHTML = '<div class="tl tln" style="color:#f88">API error: ' + (data.error.error || data.error) + '. Check API key has Faction permission.</div>';
+              el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API error: ' + (data.error.error || data.error) + '. Your API key needs <em>Faction: Basic &amp; Travel</em> permission enabled (Torn &rarr; Preferences &rarr; API Keys).</div>';
             }
             return;
           }
@@ -1570,9 +1575,10 @@ ${dots}
         el.svg.setAttribute('viewBox', `0 0 ${MAP_W} ${MAP_H}`);
         currentZoom = 1;
       }
-      // Hide player path and plane elements
+      // Hide player path and plane elements; clear dot highlights
       if (pathg) pathg.style.display = 'none';
       if (planeg) planeg.style.display = 'none';
+      highlightDots(null, null);
       stopDashAnim();
       // Fetch and show faction flights, then redraw positions every 5s
       fetchFactionFlights();
@@ -1593,6 +1599,8 @@ ${dots}
         currentZoom = MAP_W / parseFloat(savedPlayerViewBox.split(' ')[2]);
       }
       if (pathg) pathg.style.display = '';
+      if (S.flying) highlightDots(S.src, S.dst);
+      else if (S.previewDst) highlightDots(S.src, S.previewDst);
       renderLog(); // restore player commentary log
       if (planeg) planeg.style.display = '';
       if (S.flying || S.previewDst) startDashAnim();
