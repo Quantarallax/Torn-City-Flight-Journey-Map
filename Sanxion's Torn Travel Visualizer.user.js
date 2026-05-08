@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      62.0.0
+// @version      63.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1100,14 +1100,13 @@ ${dots}
       </tr>
       <tr>
         <td style="padding:2px 4px;color:#b8d4ee">Flight detection &amp; player name</td>
-        <td style="padding:2px 4px;color:#44ff88">Minimal or above</td>
+        <td style="padding:2px 4px;color:#44ff88">Minimal</td>
       </tr>
       <tr>
         <td style="padding:2px 4px;color:#b8d4ee">Faction Flights (F button)</td>
-        <td style="padding:2px 4px;color:#ffcc44">Limited or above + Faction section ticked</td>
+        <td style="padding:2px 4px;color:#ffcc44">Limited</td>
       </tr>
     </table>
-    <p style="color:#8eb8e0;font-size:10px;margin:4px 0 8px">&#9432; For faction flights: set key level to <strong style="color:#ffcc44">Limited</strong> (or higher) AND tick the <strong style="color:#ffcc44">Faction</strong> section checkbox. Both are required.</p>
     <label for="tcfv-api-inp" style="color:#b8d4ee">API Key</label><br>
     <input id="tcfv-api-inp" type="password" placeholder="Paste your Torn API key here" autocomplete="off" spellcheck="false">
     <br><br>
@@ -1121,7 +1120,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 62.0.0</p>
+    <p class="ver-t">Version 63.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1242,7 +1241,7 @@ ${dots}
 
   function showPg(pg) {
     // If faction flights are on and user switches to any other page, turn off faction view
-    if (factionFlightsOn && pg !== S.page) doFaction();
+    if (factionFlightsOn) doFaction(); // always turn off faction view when navigating
     S.page = pg;
     el.pgMain.style.display = pg === 'main' ? 'flex' : 'none';
     el.pgSet.style.display = pg === 'set' ? 'block' : 'none';
@@ -1491,7 +1490,7 @@ ${dots}
       const planeIcon = isSmall
         ? '<svg width="14" height="14" viewBox="-6 -6 12 12"><ellipse cx="0" cy="0" rx="1" ry="3.5" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="-4,-0.3 -3.5,0.5 3.5,0.5 4,-0.3" fill="#aaa" stroke="#666" stroke-width="0.5"/><line x1="-1.2" y1="3.5" x2="1.2" y2="3.5" stroke="#aaa" stroke-width="0.9"/></svg>'
         : '<svg width="14" height="14" viewBox="-7 -7 14 14"><ellipse cx="0" cy="0" rx="1.5" ry="4" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,-1.5 -6,1 -5.5,2 0,-0.2 5.5,2 6,1" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,2.5 -2,4 -1.5,4.5 0,3.5 1.5,4.5 2,4" fill="#aaa" stroke="#666" stroke-width="0.5"/></svg>';
-      html += `<div class="tl tln" style="color:#88ddff;font-size:10px;line-height:16px"><span style="vertical-align:middle">${planeIcon}</span> ${colW(m.name + ' ', 68)}${colW(srcCity + '→' + dstCity, 102)}  ${timeStr}</div>`;
+      html += `<div class="tl tln" style="color:#88ddff;font-size:10px;line-height:16px;display:flex;align-items:center;gap:3px"><span style="flex-shrink:0;display:inline-flex;align-items:center">${planeIcon}</span><span style="flex:0 0 68px;overflow:hidden;white-space:nowrap">${m.name}</span><span style="flex:0 0 102px;overflow:hidden;white-space:nowrap">${srcCity}→${dstCity}</span><span style="flex:1;white-space:nowrap">${timeStr}</span></div>`;
     }
     // Non-flying members alphabetically
     const flyingIds = new Set(Object.keys(factionData));
@@ -1549,8 +1548,12 @@ ${dots}
             const destText = toMatch[1].trim();
             const dk = matchDest(destText);
             if (!dk) continue;
-            const src = (dk === 'torn') ? 'caymans' : 'torn';
-            const routeKey = (dk === 'torn') ? 'caymans_torn' : ('torn_' + dk);
+            // Parse source from description e.g. "Traveling from South Africa to Torn"
+            const fromMatch = desc.match(/from\s+(.+?)\s+to\s/i);
+            const fromText = fromMatch ? fromMatch[1].trim() : '';
+            const srcParsed = fromText ? matchDest(fromText) : null;
+            const src = srcParsed || ((dk === 'torn') ? 'caymans' : 'torn');
+            const routeKey = `${src}_${dk}`;
             const dur = BASE_DUR[routeKey] || BASE_DUR['torn_' + dk] || 18000000;
             // v2 members endpoint gives st.until=0 — fetch exact travel data per member
             const membName = m.name || ('ID' + id);
