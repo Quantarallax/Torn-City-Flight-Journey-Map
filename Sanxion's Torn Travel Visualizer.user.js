@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.4.0
+// @version      70.5.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -945,7 +945,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.4.0</p>
+    <p class="ver-t">Version 70.5.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1192,7 +1192,7 @@ ${dots}
   }
 
   /* ─────────────────────────────────────────────────────────────
-     FACTION FLIGHTS  (Fixes 1, 2, 3, 4 applied)
+     FACTION FLIGHTS  (Fixes 1–5 applied; v70.5.0 stagger fix using canonical bezier)
   ───────────────────────────────────────────────────────────── */
 
   let factionFlightsOn = false;
@@ -1242,15 +1242,25 @@ ${dots}
         const p = bPt(i / 60, bez.s, bez.c, bez.d);
         pts.push(`${p.x.toFixed(1)},${p.y.toFixed(1)}`);
       }
-      // FIX 1 (v70.1.0): Same-route spreading via perpendicular offset.
+      // FIX 5 (v70.5.0): Stagger uses canonical (sorted-endpoint) bezier as a
+      // shared perpendicular reference so opposite-direction flights on the
+      // same route always offset to different sides. Previously each plane
+      // computed perp from its own tangent, which flipped sign for reversed
+      // direction and cancelled the stagger at mirror progress points.
       const rk2 = [sk, dk].sort().join('_');
       const grp = routeGroups[rk2] || [fid];
       const grpIdx = grp.indexOf(fid);
       const t = Math.max(0.001, Math.min(0.999, progress));
       const basePos = bPt(t, bez.s, bez.c, bez.d);
       const tangentDeg = bAng(t, bez.s, bez.c, bez.d);
+      // Canonical perpendicular reference frame: same for all planes on route.
+      const sortedKeys = [sk, dk].sort();
+      const canonBez = buildBez(sortedKeys[0], sortedKeys[1]);
+      const isCanonicalDir = sk === sortedKeys[0];
+      const canonT = isCanonicalDir ? t : (1 - t);
+      const canonTangentDeg = bAng(canonT, canonBez.s, canonBez.c, canonBez.d);
       const perpDist = grp.length > 1 ? (grpIdx - (grp.length - 1) / 2) * 9 : 0;
-      const perpRad = (tangentDeg + 90) * Math.PI / 180;
+      const perpRad = (canonTangentDeg + 90) * Math.PI / 180;
       const pos = {
         x: basePos.x + Math.cos(perpRad) * perpDist,
         y: basePos.y + Math.sin(perpRad) * perpDist,
@@ -1262,24 +1272,24 @@ ${dots}
       const plane = TICKETS[ticket]?.plane || 'jumbo';
       let shape;
       if (plane === 'jumbo') {
-        shape = `<ellipse cx="0" cy="0" rx="1.5" ry="4.5" fill="white" stroke="#333" stroke-width="0.8"/>
-  <polygon points="0,-2 -6.5,1 -5.5,2 0,-0.5 5.5,2 6.5,1" fill="white" stroke="#333" stroke-width="0.7"/>
-  <polygon points="0,2.5 -2.5,4.5 -2,5 0,3.5 2,5 2.5,4.5" fill="white" stroke="#333" stroke-width="0.6"/>`;
+        shape = `<ellipse cx="0" cy="0" rx="1.5" ry="4.5" fill="white" stroke="black" stroke-width="0.8"/>
+  <polygon points="0,-2 -6.5,1 -5.5,2 0,-0.5 5.5,2 6.5,1" fill="white" stroke="black" stroke-width="0.7"/>
+  <polygon points="0,2.5 -2.5,4.5 -2,5 0,3.5 2,5 2.5,4.5" fill="white" stroke="black" stroke-width="0.6"/>`;
       } else if (plane === 'private_plane') {
-        shape = `<ellipse cx="0" cy="0" rx="1" ry="4" fill="white" stroke="#333" stroke-width="0.8"/>
-  <polygon points="0,-1.5 -5,1.5 -4.5,2.5 0,0.5 4.5,2.5 5,1.5" fill="white" stroke="#333" stroke-width="0.7"/>
-  <polygon points="0,2.5 -2,4 -1.5,4.5 0,3.25 1.5,4.5 2,4" fill="white" stroke="#333" stroke-width="0.6"/>`;
+        shape = `<ellipse cx="0" cy="0" rx="1" ry="4" fill="white" stroke="black" stroke-width="0.8"/>
+  <polygon points="0,-1.5 -5,1.5 -4.5,2.5 0,0.5 4.5,2.5 5,1.5" fill="white" stroke="black" stroke-width="0.7"/>
+  <polygon points="0,2.5 -2,4 -1.5,4.5 0,3.25 1.5,4.5 2,4" fill="white" stroke="black" stroke-width="0.6"/>`;
       } else {
-        shape = `<ellipse cx="0" cy="0.5" rx="1" ry="3.5" fill="white" stroke="#333" stroke-width="0.8"/>
-  <polygon points="-4.5,-0.5 -4,0.5 4,0.5 4.5,-0.5" fill="white" stroke="#333" stroke-width="0.7"/>
-  <polygon points="0,2.5 -1.5,4 -1,4.5 0,3.25 1,4.5 1.5,4" fill="white" stroke="#333" stroke-width="0.6"/>
-  <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="#333" stroke-width="1.2" stroke-linecap="round"/>`;
+        shape = `<ellipse cx="0" cy="0.5" rx="1" ry="3.5" fill="white" stroke="black" stroke-width="0.8"/>
+  <polygon points="-4.5,-0.5 -4,0.5 4,0.5 4.5,-0.5" fill="white" stroke="black" stroke-width="0.7"/>
+  <polygon points="0,2.5 -1.5,4 -1,4.5 0,3.25 1,4.5 1.5,4" fill="white" stroke="black" stroke-width="0.6"/>
+  <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="black" stroke-width="1.2" stroke-linecap="round"/>`;
       }
       const fAng = (plane === 'prop_plane') ? (ang + 180) : ang;
       // FIX 2 (v70.2.0): Alternate name above/below plane.
       const lblY = (grpIdx % 2 === 0) ? (pos.y - 6) : (pos.y + 11);
       html += `<polyline points="${pts.join(' ')}" fill="none" stroke="#888" stroke-width="${sw}" stroke-dasharray="10,6" opacity="0.45"/>
-<g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${fAng.toFixed(1)}) scale(${sc})" opacity="0.7">${shape}</g>
+<g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${fAng.toFixed(1)}) scale(${sc})" opacity="0.95">${shape}</g>
 <text x="${(pos.x + 5).toFixed(1)}" y="${lblY.toFixed(1)}" fill="white" font-size="8" font-family="monospace" font-weight="bold" opacity="0.95" stroke="#000" stroke-width="0.4" paint-order="stroke fill">${m.name}</text>`;
     }
     const abroadGroups = {};
@@ -1295,7 +1305,7 @@ ${dots}
       abNames.forEach((nm2, ni2) => {
         const yOff2 = (ni2 - (abNames.length - 1) / 2) * 9;
         html += '<circle cx="' + dp2pos.x.toFixed(1) + '" cy="' + dp2pos.y.toFixed(1) + '" r="4" fill="#44cc66" stroke="#226644" stroke-width="0.8" opacity="0.8"/>';
-        html += '<text x="' + (dp2pos.x + 8).toFixed(1) + '" y="' + (dp2pos.y + yOff2 + 2).toFixed(1) + '" fill="#99cc99" font-size="7" font-family="monospace" opacity="0.85">' + nm2 + '</text>';
+        html += '<text x="' + (dp2pos.x + 8).toFixed(1) + '" y="' + (dp2pos.y + yOff2 + 2).toFixed(1) + '" fill="white" font-size="7" font-family="monospace" opacity="0.85">' + nm2 + '</text>';
       });
     }
     g.innerHTML = html;
