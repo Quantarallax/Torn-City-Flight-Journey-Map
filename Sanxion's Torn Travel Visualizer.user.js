@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      67.0.0
+// @version      68.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1119,7 +1119,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 67.0.0</p>
+    <p class="ver-t">Version 68.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1599,7 +1599,7 @@ ${dots}
             console.log('[TCFV] Querying travel for:', membName, '(id:', fetchId + ')');
             GM_xmlhttpRequest({
               method: 'GET',
-              url: `https://api.torn.com/user/${fetchId}?selections=travel,basic&key=${S.apiKey}`,
+              url: `https://api.torn.com/user/${fetchId}?selections=travel,profile&key=${S.apiKey}`,
               onload: ru => {
                 try {
                   const du = JSON.parse(ru.responseText);
@@ -1609,7 +1609,7 @@ ${dots}
                   const st2 = du.status || {};
                   const stateLC2 = (st2.state || '').toLowerCase();
                   const travelAvail = tr && tr.timestamp > 0 && tr.time_left > 0;
-                  const statusAvail = (stateLC2 === 'traveling' || stateLC2 === 'travelling') && st2.until > 0;
+                  const statusAvail = (stateLC2 === 'traveling' || stateLC2 === 'travelling');
                   if (!travelAvail && !statusAvail) {
                     console.log('[TCFV] Not traveling:', factionAllMembers[fetchId]?.name || fetchId,
                       '| state:', st2.state || 'none', '| time_left:', (tr && tr.time_left) || 0);
@@ -1627,10 +1627,16 @@ ${dots}
                     const toM2 = (st2.description || '').match(/to\s+(.+)$/i);
                     travDst2 = toM2 ? toM2[1].trim() : '';
                     meth2 = 'Standard';
-                    // Estimate departure from route duration
+                    // Estimate departure from route duration (until may be 0 for other users)
                     const estDk = matchDest(travDst2);
-                    const estDur = (estDk && BASE_DUR['torn_' + estDk]) || 18000000;
-                    depT2 = arrT2 - estDur;
+                    const estDur = (estDk && (BASE_DUR['torn_' + estDk] || BASE_DUR[estDk + '_torn'])) || 18000000;
+                    if (arrT2 > Date.now()) {
+                      depT2 = arrT2 - estDur;
+                    } else {
+                      // until=0 from API — estimate based on half-way through flight
+                      depT2 = Date.now() - estDur / 2;
+                      arrT2 = Date.now() + estDur / 2;
+                    }
                   }
                   const dk2 = matchDest(travDst2);
                   if (!dk2) {
@@ -1931,7 +1937,12 @@ ${dots}
     if (!text) return null;
     const t = norm(text);
     for (const [k, d] of Object.entries(DESTS)) {
-      if (t.includes(norm(d.city)) || t.includes(norm(d.country)) || t.includes(norm(d.label))) return k;
+      const nc = norm(d.city), ncn = norm(d.country), nl = norm(d.label);
+      // Check both directions: input contains field OR field contains input, plus exact key match
+      if (t === k || t.includes(k) || k.includes(t)) return k;
+      if (t.includes(nc) || nc.includes(t)) return k;
+      if (t.includes(ncn) || ncn.includes(t)) return k;
+      if (nl && (t.includes(nl) || nl.includes(t))) return k;
     }
     return null;
   }
