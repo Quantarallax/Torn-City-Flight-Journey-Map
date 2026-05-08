@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      50.0.0
+// @version      51.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1100,7 +1100,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 50.0.0</p>
+    <p class="ver-t">Version 51.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1442,36 +1442,111 @@ ${dots}
     g.innerHTML = html;
   }
 
+  let factionAllMembers = {}; // all members for roster { id: { name, flying } }
+
+  function renderFactionRoster() {
+    if (!el.log || !factionFlightsOn) return;
+    const now = Date.now();
+    // Build flying entries sorted by time remaining
+    const flying = Object.entries(factionData)
+      .map(([id, m]) => ({ id, ...m }))
+      .sort((a, b) => a.arrTime - b.arrTime);
+    let html = '';
+    for (const m of flying) {
+      const rem = Math.max(0, m.arrTime - now);
+      const mins = Math.floor(rem / 60000);
+      const secs = Math.floor((rem % 60000) / 1000);
+      const srcCity = DESTS[m.src]?.city || m.src || '?';
+      const dstCity = DESTS[m.dst]?.city || m.dst || '?';
+      const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+      html += `<div class="tl tln" style="color:#88ddff">\u2708 ${m.name}: ${srcCity} \u2192 ${dstCity} [${m.method || 'Std'}] ${timeStr}</div>`;
+    }
+    // Non-flying members alphabetically
+    const flyingIds = new Set(Object.keys(factionData));
+    const nonFlying = Object.values(factionAllMembers)
+      .filter(m => !flyingIds.has(m.id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    for (const m of nonFlying) {
+      html += `<div class="tl" style="color:#777">  ${m.name}</div>`;
+    }
+    if (!html) html = '<div class="tl tln">No faction members currently flying.</div>';
+    el.log.innerHTML = html;
+    el.log.scrollTop = 0;
+  }
+
   function fetchFactionFlights() {
     if (!S.apiKey || !factionFlightsOn) return;
+    // Fetch travel + members in one call for full roster
     GM_xmlhttpRequest({
       method: 'GET',
-      url: `https://api.torn.com/faction/?selections=travel&key=${S.apiKey}`,
+      url: `https://api.torn.com/faction/?selections=travel,members&key=${S.apiKey}`,
       onload: r => {
         try {
           const data = JSON.parse(r.responseText);
-          if (data.error) return;
+          if (data.error) {
+            if (el.log && factionFlightsOn) {
+              el.log.innerHTML = '<div class="tl tln" style="color:#f88">API error: ' + (data.error.error || data.error) + '. Check API key has Faction permission.</div>';
+            }
+            return;
+          }
+          // Parse all members for roster
+          factionAllMembers = {};
+          const members = data.members || {};
+          for (const [id, m] of Object.entries(members)) {
+            factionAllMembers[id] = { id, name: m.name || ('ID' + id) };
+          }
+          // Parse travelling members
+          // The travel object may have: destination (country name), departed, timestamp, method, name
           const travel = data.travel || {};
           factionData = {};
           for (const [id, m] of Object.entries(travel)) {
-            if (!m.destination || !m.departed || !m.timestamp) continue;
-            if (Date.now() > m.timestamp * 1000) continue;
-            const dk = matchDest(m.destination);
+            // Support both {destination, departed, timestamp} and nested formats
+            const dest = m.destination || m.travel?.destination;
+            const dep = m.departed || m.travel?.departed;
+            const arr = m.timestamp || m.travel?.timestamp;
+            const method = m.method || m.travel?.method || 'Standard';
+            const name = m.name || factionAllMembers[id]?.name || ('ID' + id);
+            if (!dest || !dep || !arr) continue;
+            if (Date.now() > arr * 1000) continue; // already landed
+            const dk = matchDest(dest);
             if (!dk) continue;
-            // Determine source: if heading to Torn City, they came from somewhere else
-            // If heading away from Torn City, they departed from Torn City
-            const src = (dk === 'torn') ? (m.origin ? matchDest(m.origin) || 'cayman' : 'cayman') : 'torn';
-            factionData[id] = {
-              name: m.name || ('ID' + id),
-              src,
-              dst: dk,
-              depTime: m.departed * 1000,
-              arrTime: m.timestamp * 1000,
-              method: m.method || 'standard',
-            };
+            const src = (dk === 'torn') ? 'caymans' : 'torn'; // all flights originate/return to Torn
+            factionData[id] = { name, src, dst: dk, depTime: dep * 1000, arrTime: arr * 1000, method };
+          }
+          // If no travel data but members have travelling status, try members.status
+          if (Object.keys(factionData).length === 0 && Object.keys(members).length > 0) {
+            for (const [id, m] of Object.entries(members)) {
+              const st = m.status;
+              if (!st || st.state !== 'Travelling') continue;
+              const dest = st.details?.replace(/^Travelling to /i, '') || '';
+              const arrTs = st.until;
+              if (!dest || !arrTs) continue;
+              const dk = matchDest(dest);
+              if (!dk) continue;
+              // Approximate departure from current time and until
+              const depTs = Math.floor(Date.now() / 1000) - 3600; // rough est
+              const src = (dk === 'torn') ? 'caymans' : 'torn';
+              factionData[id] = {
+                name: m.name || ('ID' + id),
+                src, dst: dk,
+                depTime: depTs * 1000,
+                arrTime: arrTs * 1000,
+                method: 'Standard',
+              };
+            }
           }
           drawFactionFlights();
-        } catch(e) {}
+          renderFactionRoster();
+        } catch(e) {
+          if (el.log && factionFlightsOn) {
+            el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API parse error.</div>';
+          }
+        }
+      },
+      onerror: () => {
+        if (el.log && factionFlightsOn) {
+          el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API request failed.</div>';
+        }
       },
     });
   }
@@ -1502,7 +1577,7 @@ ${dots}
       // Fetch and show faction flights, then redraw positions every 5s
       fetchFactionFlights();
       factionPollTimer = setInterval(fetchFactionFlights, 60000);
-      factionDrawTimer = setInterval(drawFactionFlights, 5000);
+      factionDrawTimer = setInterval(() => { drawFactionFlights(); renderFactionRoster(); }, 5000);
     } else {
       btn?.classList.remove('ta');
       clearInterval(factionPollTimer);
@@ -1518,6 +1593,7 @@ ${dots}
         currentZoom = MAP_W / parseFloat(savedPlayerViewBox.split(' ')[2]);
       }
       if (pathg) pathg.style.display = '';
+      renderLog(); // restore player commentary log
       if (planeg) planeg.style.display = '';
       if (S.flying || S.previewDst) startDashAnim();
     }
