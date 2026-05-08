@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.3.0
+// @version      70.4.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -22,7 +22,7 @@
   'use strict';
 
   /* ─────────────────────────────────────────────────────────────
-     DESTINATIONS  (Torn City canon names — no "New York")
+     DESTINATIONS
   ───────────────────────────────────────────────────────────── */
 
   const MAP_W = 1000;
@@ -43,19 +43,11 @@
     southafrica: { label:'South Africa', country:'South Africa', city:'Johannesburg', lat:-26.20, lon:28.04, col:'#88ff44' },
   };
 
-  /* ─────────────────────────────────────────────────────────────
-     BASE DURATIONS ms (standard ticket)
-  ───────────────────────────────────────────────────────────── */
-
   const BASE_DUR = {
     torn_mexico:5400000, torn_caymans:4500000, torn_canada:2700000, torn_hawaii:14400000,
     torn_uk:10800000, torn_argentina:14400000, torn_switzerland:12600000,
     torn_japan:25200000, torn_china:25200000, torn_uae:21600000, torn_southafrica:25200000,
   };
-
-  /* ─────────────────────────────────────────────────────────────
-     TICKET TYPES
-  ───────────────────────────────────────────────────────────── */
 
   const TICKETS = {
     standard: { label:'Standard', plane:'jumbo', size:'large', mult:1.00, fuel:42000, speed:545, maxAlt:32000, col:'#aaaaaa' },
@@ -63,10 +55,6 @@
     private: { label:'Private Plane', plane:'private_plane', size:'small', mult:1.80, fuel:18000, speed:480, maxAlt:32000, col:'#ff6644' },
     airstrip: { label:'Airstrip', plane:'prop_plane', size:'small', mult:1.60, fuel:6000, speed:180, maxAlt:12000, col:'#88ff44' },
   };
-
-  /* ─────────────────────────────────────────────────────────────
-     FLIGHT PHASES
-  ───────────────────────────────────────────────────────────── */
 
   const PHASE_CFG = {
     ready: { label:'READY', col:'#6699aa' },
@@ -319,10 +307,6 @@
     return h > 0 ? `${h}h ${String(m).padStart(2,'0')}m` : m > 0 ? `${m}m ${String(ss).padStart(2,'0')}s` : `${ss}s`;
   };
 
-  /* ─────────────────────────────────────────────────────────────
-     MAP VIEWPORT ZOOM
-  ───────────────────────────────────────────────────────────── */
-
   function getZoomedViewBox(sk, dk) {
     if (!sk || !dk) return `0 0 ${MAP_W} ${MAP_H}`;
     const s = toXY(DESTS[sk].lon, DESTS[sk].lat);
@@ -484,10 +468,6 @@ ${dots}
     return pts;
   }
 
-  /* ─────────────────────────────────────────────────────────────
-     DRAW FLIGHT PATH
-  ───────────────────────────────────────────────────────────── */
-
   function drawPath(sk, dk) {
     const g = document.getElementById('tcfv-pathg');
     if (!g) return;
@@ -563,10 +543,6 @@ ${dots}
 </g>`;
   }
 
-  /* ─────────────────────────────────────────────────────────────
-     HIGHLIGHT SELECTED DOTS
-  ───────────────────────────────────────────────────────────── */
-
   function highlightDots(srcK, dstK) {
     for (const key of Object.keys(DESTS)) {
       const isSelected = key === srcK || key === dstK;
@@ -591,10 +567,6 @@ ${dots}
   }
 
   let el = {};
-
-  /* ─────────────────────────────────────────────────────────────
-     STATS UPDATE
-  ───────────────────────────────────────────────────────────── */
 
   function updateStats(progress, timeLeftMs) {
     if (!el.status) return;
@@ -666,10 +638,6 @@ ${dots}
       }, i * 3800);
     });
   }
-
-  /* ─────────────────────────────────────────────────────────────
-     INFLIGHT RANDOM SCHEDULER
-  ───────────────────────────────────────────────────────────── */
 
   function buildInflightSchedule() {
     if (S.inflightSchedule) return;
@@ -977,7 +945,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.3.0</p>
+    <p class="ver-t">Version 70.4.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1224,7 +1192,7 @@ ${dots}
   }
 
   /* ─────────────────────────────────────────────────────────────
-     FACTION FLIGHTS  (Fix 1 + Fix 2 + Fix 3 applied)
+     FACTION FLIGHTS  (Fixes 1, 2, 3, 4 applied)
   ───────────────────────────────────────────────────────────── */
 
   let factionFlightsOn = false;
@@ -1274,8 +1242,7 @@ ${dots}
         const p = bPt(i / 60, bez.s, bez.c, bez.d);
         pts.push(`${p.x.toFixed(1)},${p.y.toFixed(1)}`);
       }
-      // FIX 1 (v70.1.0): Same-route spreading via perpendicular offset to path
-      // tangent. Works for opposite-direction flights.
+      // FIX 1 (v70.1.0): Same-route spreading via perpendicular offset.
       const rk2 = [sk, dk].sort().join('_');
       const grp = routeGroups[rk2] || [fid];
       const grpIdx = grp.indexOf(fid);
@@ -1309,7 +1276,7 @@ ${dots}
   <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="#333" stroke-width="1.2" stroke-linecap="round"/>`;
       }
       const fAng = (plane === 'prop_plane') ? (ang + 180) : ang;
-      // FIX 2 (v70.2.0): Alternate name above/below plane based on grpIdx parity.
+      // FIX 2 (v70.2.0): Alternate name above/below plane.
       const lblY = (grpIdx % 2 === 0) ? (pos.y - 6) : (pos.y + 11);
       html += `<polyline points="${pts.join(' ')}" fill="none" stroke="#888" stroke-width="${sw}" stroke-dasharray="10,6" opacity="0.45"/>
 <g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${fAng.toFixed(1)}) scale(${sc})" opacity="0.7">${shape}</g>
@@ -1336,12 +1303,44 @@ ${dots}
 
   let factionAllMembers = {};
 
+  // FIX 4 (v70.4.0): Dynamic column widths in the faction roster. Names and
+  // routes can be long; previously the 68px name col and 102px route col were
+  // hard-coded which truncated longer values. Now we size to the longest
+  // content across flying + abroad + non-flying entries. Non-flying members
+  // also align to the same name column for visual consistency.
   function renderFactionRoster() {
     if (!el.log || !factionFlightsOn) return;
     const now = Date.now();
     const flying = Object.entries(factionData)
       .map(([id, m]) => ({ id, ...m }))
       .sort((a, b) => a.arrTime - b.arrTime);
+    const flyingIds = new Set(Object.keys(factionData));
+    const nonFlying = Object.values(factionAllMembers)
+      .filter(m => !flyingIds.has(m.id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const abroad = Object.values(factionAbroad);
+
+    // Calculate column widths from longest content. Monospace 10px ≈ 6.2px/char.
+    const CW = 6.2;
+    const allNames = [
+      ...flying.map(m => m.name),
+      ...abroad.map(a => a.name),
+      ...nonFlying.map(m => m.name),
+    ];
+    const routes = flying.map(m => {
+      const sc = DESTS[m.src]?.city || m.src || '?';
+      const dc = DESTS[m.dst]?.city || m.dst || '?';
+      return `${sc}→${dc}`;
+    });
+    const abroadCities = abroad.map(a => DESTS[a.dest]?.city || a.dest || '?');
+    const maxNameLen = allNames.reduce((mx, n) => Math.max(mx, n.length), 0);
+    const maxRouteLen = Math.max(
+      routes.reduce((mx, r) => Math.max(mx, r.length), 0),
+      abroadCities.reduce((mx, c) => Math.max(mx, c.length), 0)
+    );
+    const nameW = Math.max(60, Math.ceil(maxNameLen * CW)) + 6;
+    const routeW = Math.max(80, Math.ceil(maxRouteLen * CW)) + 6;
+
     let html = '';
     for (const m of flying) {
       const rem = Math.max(0, m.arrTime - now);
@@ -1355,18 +1354,14 @@ ${dots}
       const planeIcon = isSmall
         ? '<svg width="14" height="14" viewBox="-6 -6 12 12"><ellipse cx="0" cy="0" rx="1" ry="3.5" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="-4,-0.3 -3.5,0.5 3.5,0.5 4,-0.3" fill="#aaa" stroke="#666" stroke-width="0.5"/><line x1="-1.2" y1="3.5" x2="1.2" y2="3.5" stroke="#aaa" stroke-width="0.9"/></svg>'
         : '<svg width="14" height="14" viewBox="-7 -7 14 14"><ellipse cx="0" cy="0" rx="1.5" ry="4" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,-1.5 -6,1 -5.5,2 0,-0.2 5.5,2 6,1" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,2.5 -2,4 -1.5,4.5 0,3.5 1.5,4.5 2,4" fill="#aaa" stroke="#666" stroke-width="0.5"/></svg>';
-      html += `<div class="tl tln" style="color:#88ddff;font-size:10px;line-height:16px;display:flex;align-items:center;gap:3px"><span style="flex-shrink:0;display:inline-flex;align-items:center">${planeIcon}</span><span style="flex:0 0 68px;overflow:hidden;white-space:nowrap">${m.name}</span><span style="flex:0 0 102px;overflow:hidden;white-space:nowrap">${srcCity}→${dstCity}</span><span style="flex:1;white-space:nowrap">${timeStr}</span></div>`;
+      html += `<div class="tl tln" style="color:#88ddff;font-size:10px;line-height:16px;display:flex;align-items:center;gap:4px"><span style="flex-shrink:0;display:inline-flex;align-items:center;width:14px;justify-content:center">${planeIcon}</span><span style="flex:0 0 ${nameW}px;overflow:hidden;white-space:nowrap">${m.name}</span><span style="flex:0 0 ${routeW}px;overflow:hidden;white-space:nowrap">${srcCity}→${dstCity}</span><span style="flex:1;white-space:nowrap">${timeStr}</span></div>`;
     }
-    for (const [, ab] of Object.entries(factionAbroad)) {
+    for (const ab of abroad) {
       const dCity = DESTS[ab.dest]?.city || ab.dest || '?';
-      html += '<div class="tl tln" style="color:#88aacc;font-size:10px;line-height:16px;display:flex;align-items:center;gap:4px"><span style="flex-shrink:0"><svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#44cc66" stroke="#226644" stroke-width="0.8"/></svg></span><span style="flex:0 0 68px">' + ab.name + '</span><span style="flex:1;color:#77cc99">' + dCity + '</span></div>';
+      html += `<div class="tl tln" style="color:#88aacc;font-size:10px;line-height:16px;display:flex;align-items:center;gap:4px"><span style="flex-shrink:0;display:inline-flex;align-items:center;width:14px;justify-content:center"><svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#44cc66" stroke="#226644" stroke-width="0.8"/></svg></span><span style="flex:0 0 ${nameW}px;overflow:hidden;white-space:nowrap">${ab.name}</span><span style="flex:1;color:#77cc99;white-space:nowrap">${dCity}</span></div>`;
     }
-    const flyingIds = new Set(Object.keys(factionData));
-    const nonFlying = Object.values(factionAllMembers)
-      .filter(m => !flyingIds.has(m.id))
-      .sort((a, b) => a.name.localeCompare(b.name));
     for (const m of nonFlying) {
-      html += `<div class="tl" style="color:#777">  ${m.name}</div>`;
+      html += `<div class="tl" style="color:#777;display:flex;align-items:center;gap:4px;font-size:10px;line-height:16px"><span style="flex-shrink:0;width:14px"></span><span style="flex:0 0 ${nameW}px;overflow:hidden;white-space:nowrap">${m.name}</span></div>`;
     }
     if (!html) html = '<div class="tl tln">No faction members currently flying.</div>';
     if (el.log.innerHTML !== html) {
@@ -1422,22 +1417,13 @@ ${dots}
               }
               continue;
             }
-            // FIX 3 (v70.3.0): Reordered abroad patterns. Specific patterns
-            // (hospital/jail/prison) tried first so adjective forms like
-            // "In a Chinese hospital" capture only "Chinese", not the whole
-            // tail. matchAbroad handles the adjective→country mapping.
+            // FIX 3 (v70.3.0): Specific patterns first, generic last.
             const abroadPatterns = [
-              // Adjective form: "In a Chinese hospital", "In a South African jail"
               /\bin\s+(?:a\s+)?([a-z]+(?:\s+[a-z]+)?)\s+(?:hospital|jail|prison)/i,
-              // "Hospitalised in <place>"
               /hospitali[sz]ed in\s+(?:a\s+)?([a-z]+(?:\s+[a-z]+)?)/i,
-              // "Serving time in <place>"
               /serving time in\s+(?:a\s+)?([a-z]+(?:\s+[a-z]+)?)/i,
-              // "Visiting <place>"
               /^visiting\s+([a-z]+(?:\s+[a-z]+){0,2}?)(?:\s+for\s|$)/i,
-              // "Abroad in <place>"
               /^abroad in\s+([a-z]+(?:\s+[a-z]+){0,2}?)(?:\s+for\s|$)/i,
-              // Generic "In UAE", "In South Africa" — fallback, tried last
               /^in\s+(?:a\s+)?([a-z]+(?:\s+[a-z]+){0,2}?)(?:\s+for\s|$)/i,
             ];
             for (const pat of abroadPatterns) {
@@ -1699,7 +1685,7 @@ ${dots}
   }
 
   /* ─────────────────────────────────────────────────────────────
-     TORN PAGE DETECTION  (Fix 3: added matchAbroad + nationality map)
+     TORN PAGE DETECTION
   ───────────────────────────────────────────────────────────── */
 
   const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -1717,10 +1703,7 @@ ${dots}
     return null;
   }
 
-  // FIX 3 (v70.3.0): Adjective forms of country names — for parsing status
-  // descriptions like "In a Chinese hospital", "In a British jail",
-  // "In a South African prison". Multi-word adjectives (e.g. "south african")
-  // handled via substring match in matchAbroad.
+  // FIX 3 (v70.3.0): Adjective forms of country names.
   const NATIONALITY_TO_DEST = {
     mexican: 'mexico',
     caymanian: 'caymans',
@@ -1744,7 +1727,6 @@ ${dots}
     if (!text) return null;
     const t = text.trim().toLowerCase().replace(/\s+/g, ' ');
     if (NATIONALITY_TO_DEST[t]) return NATIONALITY_TO_DEST[t];
-    // Substring match for multi-word adjectives buried in longer phrases
     for (const adj of Object.keys(NATIONALITY_TO_DEST)) {
       if (t.includes(adj)) return NATIONALITY_TO_DEST[adj];
     }
