@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      48.0.0
+// @version      49.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -490,6 +490,7 @@
 <!-- ── ANTARCTICA ── -->
 <rect x="0" y="${MAP_H - 24}" width="${MAP_W}" height="24" fill="#1a3a26" opacity="0.7"/>
 <!-- Dynamic layers (drawn on top of land) -->
+<g id="tcfv-factiong"></g>
 <g id="tcfv-pathg"></g>
 ${dots}
 <g id="tcfv-planeg"></g>`;
@@ -506,9 +507,13 @@ ${dots}
   function startDashAnim() {
     if (dashAnimId) cancelAnimationFrame(dashAnimId);
     const step = () => {
-      dashOffset = (dashOffset + 0.4) % 20;
+      // Modulo must match actual dash total in SVG units (20/currentZoom) so there's no jump.
+      // Increment also scaled so visual animation speed stays constant regardless of zoom.
+      const dashTotal = 20 / currentZoom;
+      const inc = 0.4 / currentZoom;
+      dashOffset = (dashOffset + inc) % dashTotal;
       const ahead = document.getElementById('tcfv-route-ahead');
-      if (ahead) ahead.style.strokeDashoffset = -dashOffset;
+      if (ahead) ahead.style.strokeDashoffset = String(-dashOffset);
       dashAnimId = requestAnimationFrame(step);
     };
     dashAnimId = requestAnimationFrame(step);
@@ -1027,6 +1032,8 @@ ${dots}
     updateStats(progress, timeLeft);
     drawPlane(progress, S.src, S.dst);
     updatePathProgress(progress, S.src, S.dst);
+    // Clear faction overlay while flying
+    if (factionFlightsOn) { const fg=document.getElementById('tcfv-factiong'); if(fg) fg.innerHTML=''; }
     loopTmr = setTimeout(tick, 1000);
   }
 
@@ -1048,6 +1055,7 @@ ${dots}
     <button class="thb" id="thb-diag" title="Diagnostics">&#9874;</button>
     <button class="thb" id="thb-set" title="API Settings">&#9881;</button>
     <button class="thb" id="thb-more" title="General Setting">&#9965;</button>
+    <button class="thb" id="thb-faction" title="Faction Flights"><b style="font-style:normal;font-size:11px">F</b></button>
     <button class="thb" id="thb-radar" title="Overlay">&#9685;</button>
     <button class="thb" id="thb-cred" title="Credits">&#9733;</button>
     <button class="thb" id="thb-min" title="Minimise">&#8212;</button>
@@ -1094,7 +1102,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 48.0.0</p>
+    <p class="ver-t">Version 49.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1162,6 +1170,7 @@ ${dots}
 
     panel.querySelector('#thb-min').addEventListener('click', () => doMin(false));
     panel.querySelector('#thb-radar').addEventListener('click', doRadar);
+    panel.querySelector('#thb-faction').addEventListener('click', doFaction);
     panel.querySelector('#thb-main').addEventListener('click', () => showPg('main'));
     panel.querySelector('#thb-diag').addEventListener('click', () => showPg('diag'));
     panel.querySelector('#thb-set').addEventListener('click', () => showPg('set'));
@@ -1364,6 +1373,142 @@ ${dots}
 </div>
 <div class="diag-schematic">${schematic}</div>
 <div class="diag-systems">${rows}</div>`;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     FACTION FLIGHTS
+  ───────────────────────────────────────────────────────────── */
+
+  let factionFlightsOn = false;
+  let factionPollTimer = null;
+  let factionData = {}; // { memberId: { name, src, dst, depTime, arrTime, method } }
+
+  function buildFactionBez(sk, dk) {
+    if (!DESTS[sk] || !DESTS[dk]) return null;
+    return buildBez(sk, dk);
+  }
+
+  function matchFactionTicket(method) {
+    if (!method) return 'standard';
+    const m = method.toLowerCase();
+    if (m.includes('business')) return 'business';
+    if (m.includes('private')) return 'private';
+    if (m.includes('airstrip')) return 'airstrip';
+    return 'standard';
+  }
+
+  function drawFactionFlights() {
+    const g = document.getElementById('tcfv-factiong');
+    if (!g) return;
+    if (!factionFlightsOn || S.flying) { g.innerHTML = ''; return; }
+    const now = Date.now();
+    let html = '';
+    for (const [, m] of Object.entries(factionData)) {
+      const sk = m.src, dk = m.dst;
+      if (!sk || !dk || sk === dk || !DESTS[sk] || !DESTS[dk]) continue;
+      const total = m.arrTime - m.depTime;
+      if (total <= 0) continue;
+      const elapsed = now - m.depTime;
+      const progress = Math.min(1, Math.max(0, elapsed / total));
+      const bez = buildFez(sk, dk);
+      if (!bez) continue;
+      // Draw gray path
+      const pts = [];
+      for (let i = 0; i <= 60; i++) {
+        const p = bPt(i / 60, bez.s, bez.c, bez.d);
+        pts.push(`${p.x.toFixed(1)},${p.y.toFixed(1)}`);
+      }
+      const t = Math.max(0.001, Math.min(0.999, progress));
+      const pos = bPt(t, bez.s, bez.c, bez.d);
+      const ang = bAng(t, bez.s, bez.c, bez.d) + 90;
+      const sw = (1.2 / currentZoom).toFixed(3);
+      const sc = (0.65 / currentZoom).toFixed(3);
+      const ticket = matchFactionTicket(m.method);
+      const plane = TICKETS[ticket]?.plane || 'jumbo';
+      let shape;
+      if (plane === 'jumbo') {
+        shape = `<ellipse cx="0" cy="0" rx="1.5" ry="4.5" fill="#aaa" stroke="#666" stroke-width="0.8"/>
+  <polygon points="0,-2 -6.5,1 -5.5,2 0,-0.5 5.5,2 6.5,1" fill="#aaa" stroke="#666" stroke-width="0.7"/>
+  <polygon points="0,2.5 -2.5,4.5 -2,5 0,3.5 2,5 2.5,4.5" fill="#aaa" stroke="#666" stroke-width="0.6"/>`;
+      } else if (plane === 'private_plane') {
+        shape = `<ellipse cx="0" cy="0" rx="1" ry="4" fill="#aaa" stroke="#666" stroke-width="0.8"/>
+  <polygon points="0,-1.5 -5,1.5 -4.5,2.5 0,0.5 4.5,2.5 5,1.5" fill="#aaa" stroke="#666" stroke-width="0.7"/>
+  <polygon points="0,2.5 -2,4 -1.5,4.5 0,3.25 1.5,4.5 2,4" fill="#aaa" stroke="#666" stroke-width="0.6"/>`;
+      } else {
+        shape = `<ellipse cx="0" cy="0.5" rx="1" ry="3.5" fill="#aaa" stroke="#666" stroke-width="0.8"/>
+  <polygon points="-4.5,-0.5 -4,0.5 4,0.5 4.5,-0.5" fill="#aaa" stroke="#666" stroke-width="0.7"/>
+  <polygon points="0,2.5 -1.5,4 -1,4.5 0,3.25 1,4.5 1.5,4" fill="#aaa" stroke="#666" stroke-width="0.6"/>
+  <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="#666" stroke-width="1.2" stroke-linecap="round"/>`;
+      }
+      const lblX = (pos.x + 4 / currentZoom).toFixed(1);
+      const lblY = (pos.y - 3 / currentZoom).toFixed(1);
+      const fontSize = (7 / currentZoom).toFixed(1);
+      html += `<polyline points="${pts.join(' ')}" fill="none" stroke="#888" stroke-width="${sw}" stroke-dasharray="${(10/currentZoom).toFixed(1)},${(6/currentZoom).toFixed(1)}" opacity="0.45"/>
+<g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${ang.toFixed(1)}) scale(${sc})" opacity="0.7">${shape}</g>
+<text x="${lblX}" y="${lblY}" fill="#999" font-size="${fontSize}" font-family="monospace" opacity="0.8">${m.name}</text>`;
+    }
+    g.innerHTML = html;
+  }
+
+  // Helper — same as buildBez but for faction (reuse main)
+  function buildFez(sk, dk) { return buildBez(sk, dk); }
+
+  function fetchFactionFlights() {
+    if (!S.apiKey || !factionFlightsOn) return;
+    apiGet(S.apiKey + '&comment=tcfv-faction', (err, data) => {
+      // apiGet uses a generic endpoint — need faction endpoint
+    });
+    // Direct faction API call
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: `https://api.torn.com/faction/?selections=travel&key=${S.apiKey}`,
+      onload: r => {
+        try {
+          const data = JSON.parse(r.responseText);
+          if (data.error) return;
+          const travel = data.travel || {};
+          factionData = {};
+          for (const [id, m] of Object.entries(travel)) {
+            if (!m.destination || !m.departed || !m.timestamp) continue;
+            if (Date.now() > m.timestamp * 1000) continue; // already landed
+            const dk = matchDest(m.destination);
+            if (!dk) continue;
+            const src = (dk === 'torn') ? (S.src || 'torn') : 'torn'; // simplified
+            factionData[id] = {
+              name: m.name || `ID${id}`,
+              src,
+              dst: dk,
+              depTime: m.departed * 1000,
+              arrTime: m.timestamp * 1000,
+              method: m.method || 'standard',
+            };
+          }
+          drawFactionFlights();
+        } catch(e) {}
+      },
+    });
+  }
+
+  function doFaction() {
+    factionFlightsOn = !factionFlightsOn;
+    const btn = document.querySelector('#thb-faction');
+    if (factionFlightsOn) {
+      if (!S.apiKey) {
+        addLog('API key required for Faction Flights. Add one in API Settings.');
+        factionFlightsOn = false;
+        return;
+      }
+      btn?.classList.add('ta');
+      fetchFactionFlights();
+      factionPollTimer = setInterval(fetchFactionFlights, 60000);
+    } else {
+      btn?.classList.remove('ta');
+      clearInterval(factionPollTimer);
+      factionPollTimer = null;
+      factionData = {};
+      const g = document.getElementById('tcfv-factiong');
+      if (g) g.innerHTML = '';
+    }
   }
 
   const RADAR_MODES = [
