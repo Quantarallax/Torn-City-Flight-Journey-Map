@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      69.0.0
+// @version      70.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1119,7 +1119,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 69.0.0</p>
+    <p class="ver-t">Version 70.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1451,34 +1451,34 @@ ${dots}
       const rk2 = [sk, dk].sort().join('_');
       const grp = routeGroups[rk2] || [fid];
       const grpIdx = grp.indexOf(fid);
-      const spread = grp.length > 1 ? (grpIdx - (grp.length - 1) / 2) * 0.08 : 0;
+      const spread = grp.length > 1 ? (grpIdx - (grp.length - 1) / 2) * 0.12 : 0;
       const t = Math.max(0.001, Math.min(0.999, progress + spread));
       const pos = bPt(t, bez.s, bez.c, bez.d);
       const ang = bAng(t, bez.s, bez.c, bez.d) + 90;
       // In faction view, currentZoom=1 (full world), so no zoom compensation needed
       const sw = '1.2';
-      const sc = '0.65';
+      const sc = '0.98'; // ×1.5 for better visibility
       const ticket = matchFactionTicket(m.method);
       const plane = TICKETS[ticket]?.plane || 'jumbo';
       let shape;
       if (plane === 'jumbo') {
-        shape = `<ellipse cx="0" cy="0" rx="1.5" ry="4.5" fill="#aaa" stroke="#666" stroke-width="0.8"/>
-  <polygon points="0,-2 -6.5,1 -5.5,2 0,-0.5 5.5,2 6.5,1" fill="#aaa" stroke="#666" stroke-width="0.7"/>
-  <polygon points="0,2.5 -2.5,4.5 -2,5 0,3.5 2,5 2.5,4.5" fill="#aaa" stroke="#666" stroke-width="0.6"/>`;
+        shape = `<ellipse cx="0" cy="0" rx="1.5" ry="4.5" fill="white" stroke="#333" stroke-width="0.8"/>
+  <polygon points="0,-2 -6.5,1 -5.5,2 0,-0.5 5.5,2 6.5,1" fill="white" stroke="#333" stroke-width="0.7"/>
+  <polygon points="0,2.5 -2.5,4.5 -2,5 0,3.5 2,5 2.5,4.5" fill="white" stroke="#333" stroke-width="0.6"/>`;
       } else if (plane === 'private_plane') {
-        shape = `<ellipse cx="0" cy="0" rx="1" ry="4" fill="#aaa" stroke="#666" stroke-width="0.8"/>
-  <polygon points="0,-1.5 -5,1.5 -4.5,2.5 0,0.5 4.5,2.5 5,1.5" fill="#aaa" stroke="#666" stroke-width="0.7"/>
-  <polygon points="0,2.5 -2,4 -1.5,4.5 0,3.25 1.5,4.5 2,4" fill="#aaa" stroke="#666" stroke-width="0.6"/>`;
+        shape = `<ellipse cx="0" cy="0" rx="1" ry="4" fill="white" stroke="#333" stroke-width="0.8"/>
+  <polygon points="0,-1.5 -5,1.5 -4.5,2.5 0,0.5 4.5,2.5 5,1.5" fill="white" stroke="#333" stroke-width="0.7"/>
+  <polygon points="0,2.5 -2,4 -1.5,4.5 0,3.25 1.5,4.5 2,4" fill="white" stroke="#333" stroke-width="0.6"/>`;
       } else {
-        shape = `<ellipse cx="0" cy="0.5" rx="1" ry="3.5" fill="#aaa" stroke="#666" stroke-width="0.8"/>
-  <polygon points="-4.5,-0.5 -4,0.5 4,0.5 4.5,-0.5" fill="#aaa" stroke="#666" stroke-width="0.7"/>
-  <polygon points="0,2.5 -1.5,4 -1,4.5 0,3.25 1,4.5 1.5,4" fill="#aaa" stroke="#666" stroke-width="0.6"/>
-  <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="#666" stroke-width="1.2" stroke-linecap="round"/>`;
+        shape = `<ellipse cx="0" cy="0.5" rx="1" ry="3.5" fill="white" stroke="#333" stroke-width="0.8"/>
+  <polygon points="-4.5,-0.5 -4,0.5 4,0.5 4.5,-0.5" fill="white" stroke="#333" stroke-width="0.7"/>
+  <polygon points="0,2.5 -1.5,4 -1,4.5 0,3.25 1,4.5 1.5,4" fill="white" stroke="#333" stroke-width="0.6"/>
+  <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="#333" stroke-width="1.2" stroke-linecap="round"/>`;
       }
       const fAng = (plane === 'prop_plane') ? (ang + 180) : ang;
       html += `<polyline points="${pts.join(' ')}" fill="none" stroke="#888" stroke-width="${sw}" stroke-dasharray="10,6" opacity="0.45"/>
 <g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${fAng.toFixed(1)}) scale(${sc})" opacity="0.7">${shape}</g>
-<text x="${(pos.x + 4).toFixed(1)}" y="${(pos.y - 3).toFixed(1)}" fill="#999" font-size="7" font-family="monospace" opacity="0.8">${m.name}</text>`;
+<text x="${(pos.x + 4).toFixed(1)}" y="${(pos.y - 3).toFixed(1)}" fill="white" font-size="8" font-family="monospace" font-weight="bold" opacity="0.9">${m.name}</text>`;
     }
     // Abroad location markers
     const abroadGroups = {};
@@ -1609,11 +1609,14 @@ ${dots}
 
             // Detect abroad: "In UAE", "In a Chinese hospital", "Visiting Japan", etc.
             const abroadPatterns = [
-              /^in (?:a )?([a-z ]+?)(?:\s+(?:hospital|jail|prison))?$/i,
-              /^visiting (.+)$/i,
-              /^abroad in (.+)$/i,
-              /hospitali[sz]ed in (.+)$/i,
-              /serving time in (?:a )?(.+?)(?:\s+jail|\s+prison)?$/i,
+              // "In UAE", "In South Africa", "In a Chinese hospital for 10 mins"
+              /^in\s+(?:a\s+)?([a-z]+(?:\s+[a-z]+){0,2})/i,
+              /^visiting\s+(.+?)(?:\s+for\s|$)/i,
+              /^abroad in\s+(.+?)(?:\s+for\s|$)/i,
+              /hospitali[sz]ed in\s+(.+?)(?:\s+for\s|$)/i,
+              /serving time in\s+(?:a\s+)?(.+?)(?:\s+(?:jail|prison)|\s+for\s|$)/i,
+              // "On the run in Japan"
+              /\bin\s+(?:a\s+)?([a-z]+(?:\s+[a-z]+){0,2})\s+(?:hospital|jail|prison)/i,
             ];
             for (const pat of abroadPatterns) {
               const aM = desc.match(pat);
