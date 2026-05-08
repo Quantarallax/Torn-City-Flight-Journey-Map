@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      59.0.0
+// @version      60.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1116,7 +1116,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 59.0.0</p>
+    <p class="ver-t">Version 60.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1462,6 +1462,7 @@ ${dots}
 
   function renderFactionRoster() {
     if (!el.log || !factionFlightsOn) return;
+    // Use data attributes on existing divs to update in-place (no scroll jump)
     const now = Date.now();
     // Build flying entries sorted by time remaining
     const flying = Object.entries(factionData)
@@ -1478,7 +1479,12 @@ ${dots}
       const dstCity = DESTS[m.dst]?.city || m.dst || '?';
       const timeStr = hrs > 0 ? `${hrs}h ${mins}m` : (mins > 0 ? `${mins}m ${secs}s` : `${secs}s`);
       const mt = (m.method || 'Std').substring(0, 7);
-      html += `<div class="tl tln" style="color:#88ddff;font-size:10px">\u2708 ${colW(m.name, 68)}${colW(srcCity + '\u2192' + dstCity, 100)}${colW('[' + mt + ']', 56)}${timeStr}</div>`;
+      // SVG ticket icon — jumbo silhouette or prop silhouette
+      const isSmall = (m.method && (m.method.toLowerCase().includes('airstrip') || m.method.toLowerCase().includes('private')));
+      const planeIcon = isSmall
+        ? '<svg width="14" height="14" viewBox="-6 -6 12 12"><ellipse cx="0" cy="0" rx="1" ry="3.5" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="-4,-0.3 -3.5,0.5 3.5,0.5 4,-0.3" fill="#aaa" stroke="#666" stroke-width="0.5"/><line x1="-1.2" y1="3.5" x2="1.2" y2="3.5" stroke="#aaa" stroke-width="0.9"/></svg>'
+        : '<svg width="14" height="14" viewBox="-7 -7 14 14"><ellipse cx="0" cy="0" rx="1.5" ry="4" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,-1.5 -6,1 -5.5,2 0,-0.2 5.5,2 6,1" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,2.5 -2,4 -1.5,4.5 0,3.5 1.5,4.5 2,4" fill="#aaa" stroke="#666" stroke-width="0.5"/></svg>';
+      html += `<div class="tl tln" style="color:#88ddff;font-size:10px">${planeIcon} ${colW(m.name, 64)}${colW(srcCity + '\u2192' + dstCity, 100)}${timeStr}</div>`;
     }
     // Non-flying members alphabetically
     const flyingIds = new Set(Object.keys(factionData));
@@ -1489,8 +1495,12 @@ ${dots}
       html += `<div class="tl" style="color:#777">  ${m.name}</div>`;
     }
     if (!html) html = '<div class="tl tln">No faction members currently flying.</div>';
-    el.log.innerHTML = html;
-    el.log.scrollTop = 0;
+    // Only update if content has changed (prevents scroll jumps)
+    if (el.log.innerHTML !== html) {
+      const scrollPos = el.log.scrollTop;
+      el.log.innerHTML = html;
+      el.log.scrollTop = scrollPos; // restore scroll position
+    }
   }
 
   function fetchFactionFlights() {
@@ -1555,6 +1565,7 @@ ${dots}
                     factionData[fetchId].method = tr.method || 'Standard';
                     console.log('[TCFV] Exact travel for', factionData[fetchId].name, '->', factionData[fetchId].dst, 'arr', new Date(arrT).toISOString());
                     drawFactionFlights();
+                    zoomToFitFaction();
                     renderFactionRoster();
                   }
                 } catch(eu) {}
@@ -1562,6 +1573,7 @@ ${dots}
             });
           }
           drawFactionFlights();
+          zoomToFitFaction();
           renderFactionRoster();
         } catch(e) {
           console.error('[TCFV] Faction API parse error:', String(e));
@@ -1579,6 +1591,54 @@ ${dots}
     });
   }
 
+  function zoomToFitFaction() {
+    // Compute bounding box of all faction flyer positions and zoom to fit
+    if (!el.svg || !factionFlightsOn) return;
+    const now = Date.now();
+    const pts = [];
+    for (const m of Object.values(factionData)) {
+      if (!m.src || !m.dst || !DESTS[m.src] || !DESTS[m.dst]) continue;
+      // Add source and destination dots
+      const s = toXY(DESTS[m.src].lon, DESTS[m.src].lat);
+      const d = toXY(DESTS[m.dst].lon, DESTS[m.dst].lat);
+      pts.push(s, d);
+      // Also add current plane position
+      const total = m.arrTime - m.depTime;
+      if (total > 0) {
+        const t = Math.min(0.999, Math.max(0.001, (now - m.depTime) / total));
+        try {
+          const bez = buildBez(m.src, m.dst);
+          if (bez) pts.push(bPt(t, bez.s, bez.c, bez.d));
+        } catch(e) {}
+      }
+    }
+    if (pts.length === 0) return;
+    let minX = pts[0].x, maxX = pts[0].x, minY = pts[0].y, maxY = pts[0].y;
+    for (const p of pts) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const pad = 40;
+    minX = Math.max(0, minX - pad);
+    minY = Math.max(0, minY - pad);
+    maxX = Math.min(MAP_W, maxX + pad);
+    maxY = Math.min(MAP_H, maxY + pad);
+    // Enforce minimum viewport
+    const vw = Math.max(maxX - minX, 150);
+    const vh = Math.max(maxY - minY, 75);
+    // Maintain 2:1 aspect ratio
+    let fw = vw, fh = fh = vh;
+    if (fw / fh < 2) { fw = fh * 2; }
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    const nx = Math.max(0, Math.min(MAP_W - fw, cx - fw / 2));
+    const ny = Math.max(0, Math.min(MAP_H - fh, cy - fh / 2));
+    const vb = `${nx.toFixed(0)} ${ny.toFixed(0)} ${fw.toFixed(0)} ${fh.toFixed(0)}`;
+    el.svg.setAttribute('viewBox', vb);
+    currentZoom = MAP_W / fw;
+  }
+
   function doFaction() {
     factionFlightsOn = !factionFlightsOn;
     const btn = document.querySelector('#thb-faction');
@@ -1592,9 +1652,10 @@ ${dots}
         return;
       }
       btn?.classList.add('ta');
-      // Save player's current viewBox and zoom, then zoom out to full world view
+      // Save player's current viewBox and zoom, then zoom to fit faction flyers
       if (el.svg) {
         savedPlayerViewBox = el.svg.getAttribute('viewBox') || `0 0 ${MAP_W} ${MAP_H}`;
+        // Start at full world; after data loads zoomToFitFaction() will tighten it
         el.svg.setAttribute('viewBox', `0 0 ${MAP_W} ${MAP_H}`);
         currentZoom = 1;
       }
@@ -1606,7 +1667,7 @@ ${dots}
       // Fetch and show faction flights, then redraw positions every 5s
       fetchFactionFlights();
       factionPollTimer = setInterval(fetchFactionFlights, 60000);
-      factionDrawTimer = setInterval(() => { drawFactionFlights(); renderFactionRoster(); }, 5000);
+      factionDrawTimer = setInterval(() => { drawFactionFlights(); zoomToFitFaction(); renderFactionRoster(); }, 5000);
     } else {
       btn?.classList.remove('ta');
       clearInterval(factionPollTimer);
