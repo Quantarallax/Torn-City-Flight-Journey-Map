@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      49.0.0
+// @version      50.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1032,8 +1032,6 @@ ${dots}
     updateStats(progress, timeLeft);
     drawPlane(progress, S.src, S.dst);
     updatePathProgress(progress, S.src, S.dst);
-    // Clear faction overlay while flying
-    if (factionFlightsOn) { const fg=document.getElementById('tcfv-factiong'); if(fg) fg.innerHTML=''; }
     loopTmr = setTimeout(tick, 1000);
   }
 
@@ -1102,7 +1100,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 49.0.0</p>
+    <p class="ver-t">Version 50.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1381,12 +1379,9 @@ ${dots}
 
   let factionFlightsOn = false;
   let factionPollTimer = null;
+  let factionDrawTimer = null;
   let factionData = {}; // { memberId: { name, src, dst, depTime, arrTime, method } }
-
-  function buildFactionBez(sk, dk) {
-    if (!DESTS[sk] || !DESTS[dk]) return null;
-    return buildBez(sk, dk);
-  }
+  let savedPlayerViewBox = ''; // saved when switching to faction view
 
   function matchFactionTicket(method) {
     if (!method) return 'standard';
@@ -1400,7 +1395,7 @@ ${dots}
   function drawFactionFlights() {
     const g = document.getElementById('tcfv-factiong');
     if (!g) return;
-    if (!factionFlightsOn || S.flying) { g.innerHTML = ''; return; }
+    if (!factionFlightsOn) { g.innerHTML = ''; return; }
     const now = Date.now();
     let html = '';
     for (const [, m] of Object.entries(factionData)) {
@@ -1410,9 +1405,8 @@ ${dots}
       if (total <= 0) continue;
       const elapsed = now - m.depTime;
       const progress = Math.min(1, Math.max(0, elapsed / total));
-      const bez = buildFez(sk, dk);
+      const bez = buildBez(sk, dk);
       if (!bez) continue;
-      // Draw gray path
       const pts = [];
       for (let i = 0; i <= 60; i++) {
         const p = bPt(i / 60, bez.s, bez.c, bez.d);
@@ -1421,8 +1415,9 @@ ${dots}
       const t = Math.max(0.001, Math.min(0.999, progress));
       const pos = bPt(t, bez.s, bez.c, bez.d);
       const ang = bAng(t, bez.s, bez.c, bez.d) + 90;
-      const sw = (1.2 / currentZoom).toFixed(3);
-      const sc = (0.65 / currentZoom).toFixed(3);
+      // In faction view, currentZoom=1 (full world), so no zoom compensation needed
+      const sw = '1.2';
+      const sc = '0.65';
       const ticket = matchFactionTicket(m.method);
       const plane = TICKETS[ticket]?.plane || 'jumbo';
       let shape;
@@ -1440,25 +1435,15 @@ ${dots}
   <polygon points="0,2.5 -1.5,4 -1,4.5 0,3.25 1,4.5 1.5,4" fill="#aaa" stroke="#666" stroke-width="0.6"/>
   <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="#666" stroke-width="1.2" stroke-linecap="round"/>`;
       }
-      const lblX = (pos.x + 4 / currentZoom).toFixed(1);
-      const lblY = (pos.y - 3 / currentZoom).toFixed(1);
-      const fontSize = (7 / currentZoom).toFixed(1);
-      html += `<polyline points="${pts.join(' ')}" fill="none" stroke="#888" stroke-width="${sw}" stroke-dasharray="${(10/currentZoom).toFixed(1)},${(6/currentZoom).toFixed(1)}" opacity="0.45"/>
+      html += `<polyline points="${pts.join(' ')}" fill="none" stroke="#888" stroke-width="${sw}" stroke-dasharray="10,6" opacity="0.45"/>
 <g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${ang.toFixed(1)}) scale(${sc})" opacity="0.7">${shape}</g>
-<text x="${lblX}" y="${lblY}" fill="#999" font-size="${fontSize}" font-family="monospace" opacity="0.8">${m.name}</text>`;
+<text x="${(pos.x + 4).toFixed(1)}" y="${(pos.y - 3).toFixed(1)}" fill="#999" font-size="7" font-family="monospace" opacity="0.8">${m.name}</text>`;
     }
     g.innerHTML = html;
   }
 
-  // Helper — same as buildBez but for faction (reuse main)
-  function buildFez(sk, dk) { return buildBez(sk, dk); }
-
   function fetchFactionFlights() {
     if (!S.apiKey || !factionFlightsOn) return;
-    apiGet(S.apiKey + '&comment=tcfv-faction', (err, data) => {
-      // apiGet uses a generic endpoint — need faction endpoint
-    });
-    // Direct faction API call
     GM_xmlhttpRequest({
       method: 'GET',
       url: `https://api.torn.com/faction/?selections=travel&key=${S.apiKey}`,
@@ -1470,12 +1455,14 @@ ${dots}
           factionData = {};
           for (const [id, m] of Object.entries(travel)) {
             if (!m.destination || !m.departed || !m.timestamp) continue;
-            if (Date.now() > m.timestamp * 1000) continue; // already landed
+            if (Date.now() > m.timestamp * 1000) continue;
             const dk = matchDest(m.destination);
             if (!dk) continue;
-            const src = (dk === 'torn') ? (S.src || 'torn') : 'torn'; // simplified
+            // Determine source: if heading to Torn City, they came from somewhere else
+            // If heading away from Torn City, they departed from Torn City
+            const src = (dk === 'torn') ? (m.origin ? matchDest(m.origin) || 'cayman' : 'cayman') : 'torn';
             factionData[id] = {
-              name: m.name || `ID${id}`,
+              name: m.name || ('ID' + id),
               src,
               dst: dk,
               depTime: m.departed * 1000,
@@ -1492,6 +1479,9 @@ ${dots}
   function doFaction() {
     factionFlightsOn = !factionFlightsOn;
     const btn = document.querySelector('#thb-faction');
+    const pathg = document.getElementById('tcfv-pathg');
+    const planeg = document.getElementById('tcfv-planeg');
+
     if (factionFlightsOn) {
       if (!S.apiKey) {
         addLog('API key required for Faction Flights. Add one in API Settings.');
@@ -1499,15 +1489,37 @@ ${dots}
         return;
       }
       btn?.classList.add('ta');
+      // Save player's current viewBox and zoom, then zoom out to full world view
+      if (el.svg) {
+        savedPlayerViewBox = el.svg.getAttribute('viewBox') || `0 0 ${MAP_W} ${MAP_H}`;
+        el.svg.setAttribute('viewBox', `0 0 ${MAP_W} ${MAP_H}`);
+        currentZoom = 1;
+      }
+      // Hide player path and plane elements
+      if (pathg) pathg.style.display = 'none';
+      if (planeg) planeg.style.display = 'none';
+      stopDashAnim();
+      // Fetch and show faction flights, then redraw positions every 5s
       fetchFactionFlights();
       factionPollTimer = setInterval(fetchFactionFlights, 60000);
+      factionDrawTimer = setInterval(drawFactionFlights, 5000);
     } else {
       btn?.classList.remove('ta');
       clearInterval(factionPollTimer);
+      clearInterval(factionDrawTimer);
       factionPollTimer = null;
+      factionDrawTimer = null;
       factionData = {};
-      const g = document.getElementById('tcfv-factiong');
-      if (g) g.innerHTML = '';
+      const fg = document.getElementById('tcfv-factiong');
+      if (fg) fg.innerHTML = '';
+      // Restore player's view
+      if (el.svg && savedPlayerViewBox) {
+        el.svg.setAttribute('viewBox', savedPlayerViewBox);
+        currentZoom = MAP_W / parseFloat(savedPlayerViewBox.split(' ')[2]);
+      }
+      if (pathg) pathg.style.display = '';
+      if (planeg) planeg.style.display = '';
+      if (S.flying || S.previewDst) startDashAnim();
     }
   }
 
