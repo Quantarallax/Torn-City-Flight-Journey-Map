@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      65.0.0
+// @version      66.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1119,7 +1119,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 65.0.0</p>
+    <p class="ver-t">Version 66.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1493,8 +1493,8 @@ ${dots}
       const dp2pos = toXY(dp2.lon, dp2.lat);
       abNames.forEach((nm2, ni2) => {
         const yOff2 = (ni2 - (abNames.length - 1) / 2) * 9;
-        html += '<circle cx="' + dp2pos.x.toFixed(1) + '" cy="' + dp2pos.y.toFixed(1) + '" r="4" fill="#5577aa" stroke="#334466" stroke-width="0.8" opacity="0.7"/>';
-        html += '<text x="' + (dp2pos.x + 6).toFixed(1) + '" y="' + (dp2pos.y + yOff2 + 2).toFixed(1) + '" fill="#88aacc" font-size="7" font-family="monospace" opacity="0.85">[A] ' + nm2 + '</text>';
+        html += '<circle cx="' + dp2pos.x.toFixed(1) + '" cy="' + dp2pos.y.toFixed(1) + '" r="4" fill="#44cc66" stroke="#226644" stroke-width="0.8" opacity="0.8"/>';
+        html += '<text x="' + (dp2pos.x + 8).toFixed(1) + '" y="' + (dp2pos.y + yOff2 + 2).toFixed(1) + '" fill="#99cc99" font-size="7" font-family="monospace" opacity="0.85">' + nm2 + '</text>';
       });
     }
     g.innerHTML = html;
@@ -1531,7 +1531,7 @@ ${dots}
     // Abroad members (landed at foreign city)
     for (const [, ab] of Object.entries(factionAbroad)) {
       const dCity = DESTS[ab.dest]?.city || ab.dest || '?';
-      html += '<div class="tl tln" style="color:#88aacc;font-size:10px;line-height:16px;display:flex;align-items:center;gap:4px"><span>[A]</span><span style="flex:0 0 68px">' + ab.name + '</span><span style="flex:1;color:#6699aa">' + dCity + ' (abroad)</span></div>';
+      html += '<div class="tl tln" style="color:#88aacc;font-size:10px;line-height:16px;display:flex;align-items:center;gap:4px"><span style="flex-shrink:0"><svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#44cc66" stroke="#226644" stroke-width="0.8"/></svg></span><span style="flex:0 0 68px">' + ab.name + '</span><span style="flex:1;color:#77cc99">' + dCity + '</span></div>';
     }
     // Non-flying members alphabetically
     const flyingIds = new Set(Object.keys(factionData));
@@ -1577,63 +1577,61 @@ ${dots}
           factionAllMembers = {};
           factionData = {};
           factionAbroad = {};
+          // Query EVERY member's individual travel data — v2 state field is unreliable
+          // for detecting return flights. This is the only reliable approach.
           for (const [id, m] of Object.entries(members)) {
             const memberId = String(m.id || m.player_id || id);
-            factionAllMembers[memberId] = { id: memberId, name: m.name || ('ID' + id) };
+            const membName = m.name || ('ID' + id);
+            factionAllMembers[memberId] = { id: memberId, name: membName };
+            // Fast-path: check state for quick abroad detection
             const st = m.status;
-            if (!st) continue;
-            // Detect members abroad (landed at foreign city, not flying)
-            if (st.state === 'Abroad') {
+            const stateLC = (st && st.state) ? st.state.toLowerCase() : '';
+            if (stateLC === 'abroad') {
               const abMatch = (st.description || '').match(/(?:in|visiting)\s+(.+)$/i);
               const abDest = abMatch ? matchDest(abMatch[1].trim()) : null;
               if (abDest && abDest !== 'torn') {
-                factionAbroad[memberId] = { name: m.name || ('ID' + id), dest: abDest };
+                factionAbroad[memberId] = { name: membName, dest: abDest };
               }
-              continue;
             }
-            if (st.state !== 'Traveling' && st.state !== 'Travelling') continue;
-            // description e.g. "Traveling from Torn to United Arab Emirates"
-            const desc = st.description || '';
-            const toMatch = desc.match(/to (.+)$/i);
-            if (!toMatch) continue;
-            const destText = toMatch[1].trim();
-            const dk = matchDest(destText);
-            if (!dk) continue;
-            // Parse source from description e.g. "Traveling from South Africa to Torn"
-            const fromMatch = desc.match(/from\s+(.+?)\s+to\s/i);
-            const fromText = fromMatch ? fromMatch[1].trim() : '';
-            const srcParsed = fromText ? matchDest(fromText) : null;
-            const src = srcParsed || ((dk === 'torn') ? 'caymans' : 'torn');
-            const routeKey = `${src}_${dk}`;
-            const dur = BASE_DUR[routeKey] || BASE_DUR['torn_' + dk] || 18000000;
-            // v2 members endpoint gives st.until=0 — fetch exact travel data per member
-            const membName = m.name || ('ID' + id);
-            factionData[memberId] = { name: membName, src, dst: dk, depTime: Date.now() - dur / 2, arrTime: Date.now() + dur / 2, method: 'Standard' };
-            // Overwrite with exact times from user/travel endpoint
+            // Make individual user/travel call for this member to get exact flight data.
+            // This works for traveling, returned, or abroad members — more reliable than state.
             const fetchId = memberId;
+            console.log('[TCFV] Querying travel for:', membName, '(id:', fetchId + ')');
             GM_xmlhttpRequest({
               method: 'GET',
-              url: `https://api.torn.com/user/${fetchId}?selections=travel&key=${S.apiKey}`,
+              url: `https://api.torn.com/user/${fetchId}?selections=travel,basic&key=${S.apiKey}`,
               onload: ru => {
                 try {
                   const du = JSON.parse(ru.responseText);
                   const tr = du.travel;
-                  if (tr && tr.timestamp && factionData[fetchId]) {
-                    const arrT = tr.timestamp * 1000;
-                    const depT = tr.departed * 1000;
-                    factionData[fetchId].arrTime = arrT;
-                    factionData[fetchId].depTime = depT;
-                    factionData[fetchId].method = tr.method || 'Standard';
-                    const tNow2 = Date.now();
-                    const fullDur2 = arrT - depT;
-                    const pct2 = fullDur2 > 0 ? Math.round(((tNow2 - depT) / fullDur2) * 100) : 50;
-                    const rem2 = Math.round(Math.max(0, arrT - tNow2) / 60000);
-                    console.log('[TCFV] Travel confirmed:', factionData[fetchId].name,
-                      '-> ' + factionData[fetchId].dst, '| progress:', pct2 + '%', '| remaining:', rem2 + 'min');
-                    drawFactionFlights();
-                    zoomToFitFaction();
-                    renderFactionRoster();
-                  }
+                  if (!tr || !tr.timestamp || tr.time_left <= 0) return;
+                  // Member IS currently traveling — add to factionData
+                  const arrT = tr.timestamp * 1000;
+                  const depT = tr.departed * 1000;
+                  // Parse destination from travel.destination
+                  const travDest = tr.destination || '';
+                  const dk2 = matchDest(travDest);
+                  if (!dk2) return;
+                  const desc2 = (du.status && du.status.description) ? du.status.description : '';
+                  const fromM2 = desc2.match(/from\s+(.+?)\s+to\s/i);
+                  const fromT2 = fromM2 ? fromM2[1].trim() : '';
+                  const srcP2 = fromT2 ? matchDest(fromT2) : null;
+                  const src2 = srcP2 || (dk2 === 'torn' ? 'caymans' : 'torn');
+                  const membN2 = (du.name || factionAllMembers[fetchId]?.name || ('ID' + fetchId));
+                  factionData[fetchId] = {
+                    name: membN2, src: src2, dst: dk2,
+                    depTime: depT, arrTime: arrT,
+                    method: tr.method || 'Standard'
+                  };
+                  const tNow2 = Date.now();
+                  const fullDur2 = arrT - depT;
+                  const pct2 = fullDur2 > 0 ? Math.round(((tNow2 - depT) / fullDur2) * 100) : 50;
+                  const rem2 = Math.round(Math.max(0, arrT - tNow2) / 60000);
+                  console.log('[TCFV] Travel confirmed:', membN2, '->', dk2,
+                    '| progress:', pct2 + '%', '| remaining:', rem2 + 'min');
+                  drawFactionFlights();
+                  zoomToFitFaction();
+                  renderFactionRoster();
                 } catch(eu) {}
               },
             });
