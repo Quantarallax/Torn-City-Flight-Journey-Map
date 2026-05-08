@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      57.0.0
+// @version      58.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1118,7 +1118,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 57.0.0</p>
+    <p class="ver-t">Version 58.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1498,7 +1498,7 @@ ${dots}
     // Member travel status is in faction/members via member.status.state + member.status.until.
     GM_xmlhttpRequest({
       method: 'GET',
-      url: `https://api.torn.com/faction/?selections=members&key=${S.apiKey}`,
+      url: `https://api.torn.com/v2/faction?selections=members&key=${S.apiKey}`,
       onload: r => {
         console.log('[TCFV] Faction members API response:', r.responseText.substring(0, 200));
         try {
@@ -1511,11 +1511,16 @@ ${dots}
             }
             return;
           }
-          const members = data.members || {};
+          // v2 API may return members as array or object — handle both
+          const rawMembers = data.members || {};
+          const members = Array.isArray(rawMembers)
+            ? Object.fromEntries(rawMembers.map(m => [String(m.id || m.player_id || m.name), m]))
+            : rawMembers;
           factionAllMembers = {};
           factionData = {};
           for (const [id, m] of Object.entries(members)) {
-            factionAllMembers[id] = { id, name: m.name || ('ID' + id) };
+            const memberId = String(m.id || m.player_id || id);
+            factionAllMembers[memberId] = { id: memberId, name: m.name || ('ID' + id) };
             const st = m.status;
             if (!st) continue;
             if (st.state !== 'Traveling' && st.state !== 'Travelling') continue;
@@ -2015,7 +2020,7 @@ ${dots}
         // Step 2: test faction access
         GM_xmlhttpRequest({
           method: 'GET',
-          url: `https://api.torn.com/faction/?selections=members&key=${key}`,
+          url: `https://api.torn.com/v2/faction?selections=members&key=${key}`,
           onload: r2 => {
             console.log('[TCFV] Test faction/travel API response:', r2.responseText.substring(0, 200));
             try {
@@ -2025,7 +2030,8 @@ ${dots}
                 console.warn('[TCFV] Test faction/travel error:', fe);
                 html += `<span style="color:#fa4">&#10007; Faction data: ${fe} — check api key: tick Faction section in key settings (Limited or higher)</span>`;
               } else {
-                const mems = Object.values(d2.members || {});
+                const rawM = d2.members || {};
+                const mems = Array.isArray(rawM) ? rawM : Object.values(rawM);
                 const flying2 = mems.filter(function(mx){ return mx.status && (mx.status.state === 'Traveling' || mx.status.state === 'Travelling'); }).length;
                 html += '<span style="color:#4f8">&#10003; Faction data: accessible (' + mems.length + ' members, ' + flying2 + ' currently travelling)</span>';
               }
