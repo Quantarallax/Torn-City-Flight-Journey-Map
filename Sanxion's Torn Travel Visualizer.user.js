@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      52.0.0
+// @version      53.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1085,13 +1085,25 @@ ${dots}
 
   <div id="tcfv-set" class="tcfv-pg" style="display:none">
     <h3>&#9881; API Settings</h3>
-    <p>An <strong>API key</strong> lets the visualiser read your live flight data directly from the Torn City servers, giving accurate real departure and arrival times.</p>
-    <p>To get your API key: log in to Torn City &rarr; <strong>Preferences</strong> &rarr; <strong>API Keys</strong> tab &rarr; create a new key. It is a 16-character alphanumeric string.</p>
-    <p><strong>Required permissions:</strong></p>
-    <ul style="margin:4px 0 8px 16px;font-size:11px;line-height:1.6">
-      <li><em>Public Access</em> — for live flight detection</li>
-      <li><em>Faction: Basic &amp; Travel</em> — for Faction Flights (F button)</li>
-    </ul>
+    <p>An <strong>API key</strong> lets the visualiser read live flight data from Torn City servers.</p>
+    <p>To get a key: <strong>Torn City</strong> &rarr; <strong>Preferences</strong> &rarr; <strong>API Keys</strong> tab &rarr; create or edit a key.</p>
+    <table style="width:100%;font-size:10px;border-collapse:collapse;margin:6px 0 10px">
+      <tr style="color:#5af;border-bottom:1px solid #1e3d5c">
+        <th style="text-align:left;padding:2px 4px">Feature</th>
+        <th style="text-align:left;padding:2px 4px">Permission needed</th>
+        <th style="text-align:left;padding:2px 4px">Key level</th>
+      </tr>
+      <tr>
+        <td style="padding:2px 4px">Flight detection &amp; player name</td>
+        <td style="padding:2px 4px">User: Basic, Travel</td>
+        <td style="padding:2px 4px;color:#44ff88">Minimal</td>
+      </tr>
+      <tr>
+        <td style="padding:2px 4px">Faction Flights (F button)</td>
+        <td style="padding:2px 4px">Faction: Basic, Travel</td>
+        <td style="padding:2px 4px;color:#ffcc44">Limited</td>
+      </tr>
+    </table>
     <label for="tcfv-api-inp">API Key</label><br>
     <input id="tcfv-api-inp" type="password" placeholder="Paste your Torn API key here" autocomplete="off" spellcheck="false">
     <br><br>
@@ -1099,13 +1111,13 @@ ${dots}
     <button class="tcfv-btn" id="tcfv-api-test">&#128279; Test Connection</button>
     <p id="tcfv-api-msg"></p>
     <hr>
-    <p class="note">Your API key is stored locally in Tampermonkey's secure storage and is only ever sent to api.torn.com. It is never transmitted anywhere else.</p>
+    <p class="note">Your key is stored locally in Tampermonkey's secure storage and only ever sent to api.torn.com.</p>
   </div>
 
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 52.0.0</p>
+    <p class="ver-t">Version 53.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1986,16 +1998,57 @@ ${dots}
 
   function testApiKey(key, msgEl) {
     if (!key) { msgEl.textContent = 'Please enter an API key first.'; return; }
-    msgEl.textContent = 'Testing\u2026'; msgEl.style.color = '#aaa';
-    apiGet(key, (err, data) => {
-      if (err || data?.error) {
-        msgEl.textContent = `Error: ${data?.error?.error || String(err)}`;
-        msgEl.style.color = '#ff4444';
-      } else {
-        S.player = data.name || S.player;
-        msgEl.textContent = `Connected as: ${data.name} [${data.player_id}]`;
-        msgEl.style.color = '#44ff88';
-      }
+    msgEl.innerHTML = 'Testing\u2026'; msgEl.style.color = '#aaa';
+    // Step 1: test user/basic for player name + travel access
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: `https://api.torn.com/user/?selections=basic,travel&key=${key}`,
+      onload: r1 => {
+        let html = '';
+        try {
+          const d1 = JSON.parse(r1.responseText);
+          if (d1.error) {
+            html = `<span style="color:#f44">&#10007; Error: ${d1.error.error || d1.error}</span>`;
+            msgEl.innerHTML = html;
+            return;
+          }
+          const name = d1.name || '?';
+          const pid = d1.player_id || '?';
+          S.player = name;
+          html += `<span style="color:#4f8">&#10003; Connected as: <strong>${name}</strong> [${pid}]</span><br>`;
+          html += `<span style="color:#4f8">&#10003; Flight data: accessible</span><br>`;
+        } catch(e) {
+          html = `<span style="color:#f44">&#10007; Parse error</span>`;
+          msgEl.innerHTML = html;
+          return;
+        }
+        // Step 2: test faction access
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url: `https://api.torn.com/faction/?selections=basic&key=${key}`,
+          onload: r2 => {
+            try {
+              const d2 = JSON.parse(r2.responseText);
+              if (d2.error) {
+                html += `<span style="color:#fa4">&#10007; Faction data: ${d2.error.error || d2.error} — enable Faction: Basic in API key settings</span>`;
+              } else {
+                const fn = d2.name || 'your faction';
+                html += `<span style="color:#4f8">&#10003; Faction data: accessible (${fn})</span>`;
+              }
+            } catch(e) {
+              html += `<span style="color:#fa4">&#10007; Faction data: parse error</span>`;
+            }
+            msgEl.innerHTML = html;
+          },
+          onerror: () => {
+            html += `<span style="color:#fa4">&#10007; Faction data: request failed</span>`;
+            msgEl.innerHTML = html;
+          },
+        });
+      },
+      onerror: () => {
+        msgEl.innerHTML = '<span style="color:#f44">&#10007; Request failed — check network</span>';
+      },
     });
   }
 
