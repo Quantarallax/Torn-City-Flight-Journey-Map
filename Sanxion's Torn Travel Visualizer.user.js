@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      58.0.0
+// @version      59.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -627,8 +627,9 @@ ${dots}
     }
 
     // Rotation: bAng gives tangent angle where 0°=right, 90°=down (SVG convention).
-    // The plane nose points up (-y = -90°). Adding 90° corrects this so nose aligns with travel direction.
-    const rotAngle = ang + 90;
+    // The plane nose points up (-y = -90°). Adding 90° corrects nose alignment with travel direction.
+    // prop_plane shape has its tail at top, so add extra 180° to flip it to face forward.
+    const rotAngle = (plane === 'prop_plane') ? (ang + 90 + 180) : (ang + 90);
 
     g.innerHTML = `<g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${rotAngle.toFixed(1)}) scale(${scale})">
   <g filter="url(#gl)">${svgShape}
@@ -1090,18 +1091,15 @@ ${dots}
     <table style="width:100%;font-size:10px;border-collapse:collapse;margin:6px 0 10px">
       <tr style="color:#5af;border-bottom:1px solid #1e3d5c">
         <th style="text-align:left;padding:2px 4px">Feature</th>
-        <th style="text-align:left;padding:2px 4px">Permission needed</th>
-        <th style="text-align:left;padding:2px 4px">Key level</th>
+        <th style="text-align:left;padding:2px 4px">Key required</th>
       </tr>
       <tr>
         <td style="padding:2px 4px;color:#b8d4ee">Flight detection &amp; player name</td>
-        <td style="padding:2px 4px;color:#8eb8e0">user/travel, user/basic</td>
-        <td style="padding:2px 4px;color:#44ff88">Minimal key</td>
+        <td style="padding:2px 4px;color:#44ff88">Minimal or above</td>
       </tr>
       <tr>
         <td style="padding:2px 4px;color:#b8d4ee">Faction Flights (F button)</td>
-        <td style="padding:2px 4px;color:#8eb8e0">faction/members (with status)</td>
-        <td style="padding:2px 4px;color:#ffcc44">Limited key + Faction section ticked</td>
+        <td style="padding:2px 4px;color:#ffcc44">Limited or above + Faction section ticked</td>
       </tr>
     </table>
     <p style="color:#8eb8e0;font-size:10px;margin:4px 0 8px">&#9432; For faction flights: set key level to <strong style="color:#ffcc44">Limited</strong> (or higher) AND tick the <strong style="color:#ffcc44">Faction</strong> section checkbox. Both are required.</p>
@@ -1118,7 +1116,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 58.0.0</p>
+    <p class="ver-t">Version 59.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1470,14 +1468,17 @@ ${dots}
       .map(([id, m]) => ({ id, ...m }))
       .sort((a, b) => a.arrTime - b.arrTime);
     let html = '';
+    const colW = (s, w) => `<span style="display:inline-block;min-width:${w}px;overflow:hidden">${s}</span>`;
     for (const m of flying) {
       const rem = Math.max(0, m.arrTime - now);
-      const mins = Math.floor(rem / 60000);
+      const hrs = Math.floor(rem / 3600000);
+      const mins = Math.floor((rem % 3600000) / 60000);
       const secs = Math.floor((rem % 60000) / 1000);
       const srcCity = DESTS[m.src]?.city || m.src || '?';
       const dstCity = DESTS[m.dst]?.city || m.dst || '?';
-      const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-      html += `<div class="tl tln" style="color:#88ddff">\u2708 ${m.name}: ${srcCity} \u2192 ${dstCity} [${m.method || 'Std'}] ${timeStr}</div>`;
+      const timeStr = hrs > 0 ? `${hrs}h ${mins}m` : (mins > 0 ? `${mins}m ${secs}s` : `${secs}s`);
+      const mt = (m.method || 'Std').substring(0, 7);
+      html += `<div class="tl tln" style="color:#88ddff;font-size:10px">\u2708 ${colW(m.name, 68)}${colW(srcCity + '\u2192' + dstCity, 100)}${colW('[' + mt + ']', 56)}${timeStr}</div>`;
     }
     // Non-flying members alphabetically
     const flyingIds = new Set(Object.keys(factionData));
@@ -1507,7 +1508,7 @@ ${dots}
             const ferr = typeof data.error === 'object' ? data.error.error : data.error;
             console.error('[TCFV] Faction members API error:', ferr);
             if (el.log && factionFlightsOn) {
-              el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API error — check api key: ' + ferr + '. In Torn &rarr; Preferences &rarr; API Keys: tick the <strong>Faction</strong> section and set level to <strong>Limited</strong> or higher.</div>';
+              el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction error: ' + ferr + ' — check api key</div>';
             }
             return;
           }
@@ -1531,29 +1532,48 @@ ${dots}
             const destText = toMatch[1].trim();
             const dk = matchDest(destText);
             if (!dk) continue;
-            const arrTime = (st.until || 0) * 1000;
-            if (arrTime && Date.now() > arrTime) continue;
             const src = (dk === 'torn') ? 'caymans' : 'torn';
-            const routeKey = (dk === 'torn') ? ('caymans_torn') : ('torn_' + dk);
+            const routeKey = (dk === 'torn') ? 'caymans_torn' : ('torn_' + dk);
             const dur = BASE_DUR[routeKey] || BASE_DUR['torn_' + dk] || 18000000;
-            const depTime = arrTime ? (arrTime - dur) : (Date.now() - dur / 2);
-            const method = (m.travel && m.travel.method) ? m.travel.method : 'Standard';
-            console.log('[TCFV] Faction member traveling:', m.name, '->', dk, 'arr', new Date(arrTime).toISOString());
-            factionData[id] = { name: m.name || ('ID' + id), src, dst: dk, depTime, arrTime, method };
+            // v2 members endpoint gives st.until=0 — fetch exact travel data per member
+            const membName = m.name || ('ID' + id);
+            factionData[memberId] = { name: membName, src, dst: dk, depTime: Date.now() - dur / 2, arrTime: Date.now() + dur / 2, method: 'Standard' };
+            // Overwrite with exact times from user/travel endpoint
+            const fetchId = memberId;
+            GM_xmlhttpRequest({
+              method: 'GET',
+              url: `https://api.torn.com/user/${fetchId}?selections=travel&key=${S.apiKey}`,
+              onload: ru => {
+                try {
+                  const du = JSON.parse(ru.responseText);
+                  const tr = du.travel;
+                  if (tr && tr.timestamp && factionData[fetchId]) {
+                    const arrT = tr.timestamp * 1000;
+                    const depT = tr.departed * 1000;
+                    factionData[fetchId].arrTime = arrT;
+                    factionData[fetchId].depTime = depT;
+                    factionData[fetchId].method = tr.method || 'Standard';
+                    console.log('[TCFV] Exact travel for', factionData[fetchId].name, '->', factionData[fetchId].dst, 'arr', new Date(arrT).toISOString());
+                    drawFactionFlights();
+                    renderFactionRoster();
+                  }
+                } catch(eu) {}
+              },
+            });
           }
           drawFactionFlights();
           renderFactionRoster();
         } catch(e) {
           console.error('[TCFV] Faction API parse error:', String(e));
           if (el.log && factionFlightsOn) {
-            el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API parse error — check api key.</div>';
+            el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction parse error — check api key</div>';
           }
         }
       },
       onerror: () => {
         console.error('[TCFV] Faction API request failed');
         if (el.log && factionFlightsOn) {
-          el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API request failed — check network.</div>';
+          el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction request failed — check api key</div>';
         }
       },
     });
