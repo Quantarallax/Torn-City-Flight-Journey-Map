@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      54.0.0
+// @version      55.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1095,12 +1095,12 @@ ${dots}
       </tr>
       <tr style="color:#b8d4ee">
         <td style="padding:2px 4px">Flight detection &amp; player name</td>
-        <td style="padding:2px 4px">User: Basic, Travel</td>
+        <td style="padding:2px 4px">User: travel, basic (v1 API)</td>
         <td style="padding:2px 4px;color:#44ff88">Minimal</td>
       </tr>
       <tr style="color:#b8d4ee">
         <td style="padding:2px 4px">Faction Flights (F button)</td>
-        <td style="padding:2px 4px">Faction: Basic, Travel</td>
+        <td style="padding:2px 4px">Faction: travel, members (v1 API)</td>
         <td style="padding:2px 4px;color:#ffcc44">Limited</td>
       </tr>
     </table>
@@ -1117,7 +1117,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 54.0.0</p>
+    <p class="ver-t">Version 55.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1498,11 +1498,14 @@ ${dots}
       method: 'GET',
       url: `https://api.torn.com/faction/?selections=travel&key=${S.apiKey}`,
       onload: r => {
+        console.log('[TCFV] Faction travel API response:', r.responseText.substring(0, 200));
         try {
           const data = JSON.parse(r.responseText);
           if (data.error) {
             if (el.log && factionFlightsOn) {
-              el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API error — check api key: ' + (data.error.error || data.error) + '. Enable <em>Faction: Basic &amp; Travel</em> in Torn &rarr; Preferences &rarr; API Keys.</div>';
+              const ferr = typeof data.error === 'object' ? data.error.error : data.error;
+              console.error('[TCFV] Faction travel API error:', ferr);
+              el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API error — check api key: ' + ferr + '. A <strong>Limited</strong> access key is required for faction data (Torn &rarr; Preferences &rarr; API Keys).</div>';
             }
             return;
           }
@@ -1568,13 +1571,15 @@ ${dots}
           });
         } catch(e) {
           if (el.log && factionFlightsOn) {
-            el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API parse error — check api key permissions.</div>';
+            console.error('[TCFV] Faction API parse error');
+            el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API parse error — check api key. A <strong>Limited</strong> access key is required.</div>';
           }
         }
       },
       onerror: () => {
         if (el.log && factionFlightsOn) {
-          el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API request failed — check api key and network.</div>';
+          console.error('[TCFV] Faction API request failed');
+          el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction API request failed — check api key and network connection.</div>';
         }
       },
     });
@@ -2003,8 +2008,11 @@ ${dots}
     GM_xmlhttpRequest({
       method: 'GET',
       url: `https://api.torn.com/user/?selections=travel,basic&key=${key}`,
-      onload: r => { try { cb(null, JSON.parse(r.responseText)); } catch(e) { cb(e); } },
-      onerror: e => cb(e),
+      onload: r => {
+        console.log('[TCFV] apiGet (user/travel,basic) response:', r.responseText.substring(0, 200));
+        try { cb(null, JSON.parse(r.responseText)); } catch(e) { cb(e); }
+      },
+      onerror: e => { console.error('[TCFV] apiGet request failed:', e); cb(e); },
     });
   }
 
@@ -2016,6 +2024,7 @@ ${dots}
       method: 'GET',
       url: `https://api.torn.com/user/?selections=basic,travel&key=${key}`,
       onload: r1 => {
+        console.log('[TCFV] Test user API response:', r1.responseText.substring(0, 200));
         let html = '';
         try {
           const d1 = JSON.parse(r1.responseText);
@@ -2039,10 +2048,13 @@ ${dots}
           method: 'GET',
           url: `https://api.torn.com/faction/?selections=basic&key=${key}`,
           onload: r2 => {
+            console.log('[TCFV] Test faction API response:', r2.responseText.substring(0, 200));
             try {
               const d2 = JSON.parse(r2.responseText);
               if (d2.error) {
-                html += `<span style="color:#fa4">&#10007; Faction data: ${d2.error.error || d2.error} — enable Faction: Basic in API key settings</span>`;
+                const fe = typeof d2.error === 'object' ? d2.error.error : d2.error;
+                console.warn('[TCFV] Test faction error:', fe);
+                html += `<span style="color:#fa4">&#10007; Faction data: ${fe} — a <strong>Limited</strong> access key is required for faction data</span>`;
               } else {
                 const fn = d2.name || 'your faction';
                 html += `<span style="color:#4f8">&#10003; Faction data: accessible (${fn})</span>`;
