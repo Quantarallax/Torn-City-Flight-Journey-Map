@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      66.0.0
+// @version      67.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1119,7 +1119,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 66.0.0</p>
+    <p class="ver-t">Version 67.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1604,15 +1604,40 @@ ${dots}
                 try {
                   const du = JSON.parse(ru.responseText);
                   const tr = du.travel;
-                  if (!tr || !tr.timestamp || tr.time_left <= 0) return;
-                  // Member IS currently traveling — add to factionData
-                  const arrT = tr.timestamp * 1000;
-                  const depT = tr.departed * 1000;
-                  // Parse destination from travel.destination
-                  const travDest = tr.destination || '';
-                  const dk2 = matchDest(travDest);
-                  if (!dk2) return;
-                  const desc2 = (du.status && du.status.description) ? du.status.description : '';
+                  // Try travel selection first (own-user only in Torn v1 API).
+                  // Fall back to basic status.state + status.until for other members.
+                  const st2 = du.status || {};
+                  const stateLC2 = (st2.state || '').toLowerCase();
+                  const travelAvail = tr && tr.timestamp > 0 && tr.time_left > 0;
+                  const statusAvail = (stateLC2 === 'traveling' || stateLC2 === 'travelling') && st2.until > 0;
+                  if (!travelAvail && !statusAvail) {
+                    console.log('[TCFV] Not traveling:', factionAllMembers[fetchId]?.name || fetchId,
+                      '| state:', st2.state || 'none', '| time_left:', (tr && tr.time_left) || 0);
+                    return;
+                  }
+                  let arrT2, depT2, travDst2, meth2;
+                  if (travelAvail) {
+                    arrT2 = tr.timestamp * 1000;
+                    depT2 = tr.departed * 1000;
+                    travDst2 = tr.destination || '';
+                    meth2 = tr.method || 'Standard';
+                  } else {
+                    // Use status: description = "Traveling from X to Y", until = arrival timestamp
+                    arrT2 = st2.until * 1000;
+                    const toM2 = (st2.description || '').match(/to\s+(.+)$/i);
+                    travDst2 = toM2 ? toM2[1].trim() : '';
+                    meth2 = 'Standard';
+                    // Estimate departure from route duration
+                    const estDk = matchDest(travDst2);
+                    const estDur = (estDk && BASE_DUR['torn_' + estDk]) || 18000000;
+                    depT2 = arrT2 - estDur;
+                  }
+                  const dk2 = matchDest(travDst2);
+                  if (!dk2) {
+                    console.log('[TCFV] No dest match for:', travDst2);
+                    return;
+                  }
+                  const desc2 = st2.description || '';
                   const fromM2 = desc2.match(/from\s+(.+?)\s+to\s/i);
                   const fromT2 = fromM2 ? fromM2[1].trim() : '';
                   const srcP2 = fromT2 ? matchDest(fromT2) : null;
@@ -1620,14 +1645,14 @@ ${dots}
                   const membN2 = (du.name || factionAllMembers[fetchId]?.name || ('ID' + fetchId));
                   factionData[fetchId] = {
                     name: membN2, src: src2, dst: dk2,
-                    depTime: depT, arrTime: arrT,
-                    method: tr.method || 'Standard'
+                    depTime: depT2, arrTime: arrT2, method: meth2
                   };
                   const tNow2 = Date.now();
-                  const fullDur2 = arrT - depT;
-                  const pct2 = fullDur2 > 0 ? Math.round(((tNow2 - depT) / fullDur2) * 100) : 50;
-                  const rem2 = Math.round(Math.max(0, arrT - tNow2) / 60000);
+                  const fullDur2 = arrT2 - depT2;
+                  const pct2 = fullDur2 > 0 ? Math.round(((tNow2 - depT2) / fullDur2) * 100) : 50;
+                  const rem2 = Math.round(Math.max(0, arrT2 - tNow2) / 60000);
                   console.log('[TCFV] Travel confirmed:', membN2, '->', dk2,
+                    '| via:', travelAvail ? 'travel-sel' : 'status-field',
                     '| progress:', pct2 + '%', '| remaining:', rem2 + 'min');
                   drawFactionFlights();
                   zoomToFitFaction();
