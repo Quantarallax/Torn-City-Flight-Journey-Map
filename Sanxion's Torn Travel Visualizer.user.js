@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.7.0
+// @version      70.8.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -765,7 +765,7 @@ ${dots}
         addLog('Armed security turn you away.');
         setTimeout(() => {
           if (S.stateOfEmergency) addLog('Torn City is in lockdown. Airport closed until further notice.');
-        }, 1000);
+        }, 2000);
         saveS();
       }
       if (el.status) {
@@ -776,8 +776,8 @@ ${dots}
       return;
     }
     if (S.stateOfEmergency) {
+      // v70.8.0: clear flag silently — spec says no re-open message for SoE.
       S.stateOfEmergency = false;
-      addLog('Airport has re-opened.');
       saveS();
     }
     // POTENTIAL TERROR THREAT (v70.6.0): airport closed pre-emptively due to
@@ -790,7 +790,7 @@ ${dots}
         addLog('Armed security point their weapons at you, denying entry.');
         setTimeout(() => {
           if (S.terrorThreat) addLog('Torn City is in lockdown. Airport closed until further notice.');
-        }, 1000);
+        }, 2000);
         saveS();
       }
       if (el.status) {
@@ -801,8 +801,8 @@ ${dots}
       return;
     }
     if (S.terrorThreat) {
+      // v70.8.0: clear flag silently — spec says no re-open message for terror threat.
       S.terrorThreat = false;
-      addLog('Airport has re-opened.');
       saveS();
     }
     if (!S.flying || !S.dst) {
@@ -997,7 +997,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.7.0</p>
+    <p class="ver-t">Version 70.8.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
