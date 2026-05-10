@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.5.0
+// @version      70.6.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -65,6 +65,8 @@
     arrived: { label:'LANDED', col:'#44ff88' },
     airport_closed: { label:'AIRPORT CLOSED', col:'#ff3333' },
     inaccessible: { label:'NO FLYING ALLOWED', col:'#ff6600' },
+    terror_threat: { label:'POTENTIAL TERROR THREAT', col:'#ff4400' },
+    state_of_emergency: { label:'STATE OF EMERGENCY', col:'#cc0044' },
   };
 
   const WEATHER = ['clear skies','partly cloudy','overcast','light rain','warm and humid','cool and breezy','sunny with light winds','scattered showers'];
@@ -203,7 +205,7 @@
     ticket:'standard', player:'Pilot', flying:false, isReturn:false,
     prevPhase:'', phasesTriggered:{}, turbTriggered:false, halfwayFired:false,
     log:[], px:20, py:60, pw:680, ph_panel:520, min:false, page:'main', apiKey:'',
-    previewDst:null, inflightSchedule:null, planeScale:100, inflightLogStart:null, diagnostics:null, airportClosed:false, inHospital:false,
+    previewDst:null, inflightSchedule:null, planeScale:100, inflightLogStart:null, diagnostics:null, airportClosed:false, inHospital:false, terrorThreat:false, stateOfEmergency:false,
   };
 
   const saveS = () => {
@@ -213,7 +215,7 @@
         ticket:S.ticket, player:S.player, flying:S.flying, isReturn:S.isReturn,
         prevPhase:S.prevPhase, phasesTriggered:S.phasesTriggered, turbTriggered:S.turbTriggered, halfwayFired:S.halfwayFired,
         log:S.log.slice(-30), px:S.px, py:S.py, pw:S.pw, ph_panel:S.ph_panel,
-        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale, inflightLogStart:S.inflightLogStart, diagnostics:S.diagnostics, airportClosed:S.airportClosed, inHospital:S.inHospital,
+        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale, inflightLogStart:S.inflightLogStart, diagnostics:S.diagnostics, airportClosed:S.airportClosed, inHospital:S.inHospital, terrorThreat:S.terrorThreat, stateOfEmergency:S.stateOfEmergency,
       }));
     } catch(e) {}
   };
@@ -604,7 +606,7 @@ ${dots}
   let phRunId = {};
 
   function addLog(text) {
-    if ((S.airportClosed || S.inHospital) && !text.includes('Airport') && !text.includes('hospital') && !text.includes('discharged')) return;
+    if ((S.airportClosed || S.inHospital || S.terrorThreat || S.stateOfEmergency) && !text.includes('Airport') && !text.includes('hospital') && !text.includes('discharged') && !text.includes('lockdown') && !text.includes('under attack')) return;
     S.log.push(text);
     if (S.log.length > 30) S.log.shift();
     renderLog();
@@ -752,6 +754,50 @@ ${dots}
         loopTmr = setTimeout(tick, 1000);
         return;
       }
+    }
+    // STATE OF EMERGENCY (v70.6.0): airspace closed after a terror attack —
+    // higher precedence than terror threat as it implies the attack happened.
+    const SOE_STRING = 'The airspace above Torn City is closed due to the recent terror attack';
+    const soeTextPresent = bodyText.includes(SOE_STRING);
+    if (soeTextPresent) {
+      if (!S.stateOfEmergency) {
+        S.stateOfEmergency = true;
+        addLog('Torn City is in lockdown. Airport closed until further notice.');
+        saveS();
+      }
+      if (el.status) {
+        el.status.textContent = PHASE_CFG.state_of_emergency.label;
+        el.status.style.color = PHASE_CFG.state_of_emergency.col;
+      }
+      loopTmr = setTimeout(tick, 1000);
+      return;
+    }
+    if (S.stateOfEmergency) {
+      S.stateOfEmergency = false;
+      addLog('Airport has re-opened.');
+      saveS();
+    }
+    // POTENTIAL TERROR THREAT (v70.6.0): airport closed pre-emptively due to
+    // intelligence on a possible attack.
+    const TT_STRING = 'The airport is temporarily closed due to reports of a potential terror threat against Torn City';
+    const ttTextPresent = bodyText.includes(TT_STRING);
+    if (ttTextPresent) {
+      if (!S.terrorThreat) {
+        S.terrorThreat = true;
+        addLog('Torn City is under attack. Airport closed until further notice.');
+        saveS();
+      }
+      if (el.status) {
+        el.status.textContent = PHASE_CFG.terror_threat.label;
+        el.status.style.color = PHASE_CFG.terror_threat.col;
+      }
+      loopTmr = setTimeout(tick, 1000);
+      return;
+    }
+    if (S.terrorThreat) {
+      S.terrorThreat = false;
+      addLog('Airport has re-opened.');
+      saveS();
     }
     if (!S.flying || !S.dst) {
       updateStats(0, 0);
@@ -945,7 +991,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.5.0</p>
+    <p class="ver-t">Version 70.6.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -2290,6 +2336,10 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
     if (S.airportClosed) {
       const am = '\x01Airport closed — you are in a <a href="https://www.torn.com/page.php?sid=racing" target="_blank" style="color:#ff6666;text-decoration:underline">race</a>.';
       S.log = [am];
+    } else if (S.stateOfEmergency) {
+      S.log = ['Torn City is in lockdown. Airport closed until further notice.'];
+    } else if (S.terrorThreat) {
+      S.log = ['Torn City is under attack. Airport closed until further notice.'];
     }
     injectCSS();
     buildHUD();
