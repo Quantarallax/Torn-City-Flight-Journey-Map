@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.8.0
+// @version      70.9.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -470,6 +470,12 @@ ${dots}
     return pts;
   }
 
+  // v70.9.0: ahead polyline now always shows the FULL path so its geometry
+  // never changes — the dash-offset animation flows continuously without the
+  // per-tick "snap" that used to happen when ahead was sliced from the plane's
+  // current position. The solid trail polyline is drawn ON TOP of ahead and
+  // grows as the plane progresses, covering the dashed pattern behind it.
+  // Trail uses opacity 1.0 to fully obscure the dashes underneath.
   function drawPath(sk, dk) {
     const g = document.getElementById('tcfv-pathg');
     if (!g) return;
@@ -484,9 +490,15 @@ ${dots}
     const col = TICKETS[S.ticket]?.col || '#fff';
     const { s } = buildBez(sk, dk);
     const { d } = buildBez(sk, dk);
+    // Stroke widths and dash sizes are inversely scaled by currentZoom so they
+    // render at a constant visual size regardless of zoom level.
+    const trailW = (2.2 / currentZoom).toFixed(3);
+    const aheadW = (2 / currentZoom).toFixed(3);
+    const dashOn = (12 / currentZoom).toFixed(1);
+    const dashOff = (8 / currentZoom).toFixed(1);
     g.innerHTML = `
-<polyline id="tcfv-route-trail" points="${pts[0]}" fill="none" stroke="${col}" stroke-width="${(2.2/currentZoom).toFixed(3)}" stroke-linecap="round" opacity="0.85"/>
-<polyline id="tcfv-route-ahead" points="${pts.join(' ')}" fill="none" stroke="${col}" stroke-width="${(2/currentZoom).toFixed(3)}" stroke-dasharray="${(12/currentZoom).toFixed(1)},${(8/currentZoom).toFixed(1)}" stroke-linecap="round" opacity="0.55"/>
+<polyline id="tcfv-route-ahead" points="${pts.join(' ')}" fill="none" stroke="${col}" stroke-width="${aheadW}" stroke-dasharray="${dashOn},${dashOff}" stroke-linecap="round" opacity="0.55"/>
+<polyline id="tcfv-route-trail" points="${pts[0]} ${pts[0]}" fill="none" stroke="${col}" stroke-width="${trailW}" stroke-linecap="round" opacity="1"/>
 <circle cx="${s.x.toFixed(1)}" cy="${s.y.toFixed(1)}" r="5" fill="${DESTS[sk]?.col||'#fff'}" opacity="0.9" filter="url(#gl)"/>
 <circle cx="${d.x.toFixed(1)}" cy="${d.y.toFixed(1)}" r="5" fill="${DESTS[dk]?.col||'#fff'}" opacity="0.9" filter="url(#gl)"/>`;
     startDashAnim();
@@ -495,20 +507,15 @@ ${dots}
   function updatePathProgress(progress, sk, dk) {
     if (!sk || !dk || sk === dk) return;
     const trail = document.getElementById('tcfv-route-trail');
-    const ahead = document.getElementById('tcfv-route-ahead');
-    if (!trail || !ahead) return;
-    trail.setAttribute('stroke-width', (2.2 / currentZoom).toFixed(3));
-    ahead.setAttribute('stroke-width', (2 / currentZoom).toFixed(3));
-    ahead.setAttribute('stroke-dasharray', `${(12/currentZoom).toFixed(1)},${(8/currentZoom).toFixed(1)}`);
+    if (!trail) return;
+    // v70.9.0: only update trail's geometry. ahead stays as the full path so
+    // its dash animation runs uninterrupted at 60 fps.
     const pts = getPathPts(sk, dk);
     const N = pts.length - 1;
     const splitIdx = Math.max(0, Math.min(N, Math.round(progress * N)));
     const trailPts = pts.slice(0, splitIdx + 1);
-    const aheadPts = pts.slice(splitIdx);
     if (trailPts.length >= 2) trail.setAttribute('points', trailPts.join(' '));
     else trail.setAttribute('points', pts[0] + ' ' + pts[0]);
-    if (aheadPts.length >= 2) ahead.setAttribute('points', aheadPts.join(' '));
-    else ahead.setAttribute('points', pts[N] + ' ' + pts[N]);
   }
 
   function drawPlane(progress, sk, dk) {
@@ -997,7 +1004,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.8.0</p>
+    <p class="ver-t">Version 70.9.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1740,12 +1747,13 @@ ${dots}
   function previewDest(dstK) {
     if (S.flying) return;
     S.previewDst = dstK;
-    drawPath(S.src, dstK);
+    // v70.9.0: zoom first so drawPath uses the correct currentZoom for stroke widths.
     if (el.svg) {
       const vb = getZoomedViewBox(S.src, dstK);
       el.svg.setAttribute('viewBox', vb);
       currentZoom = MAP_W / parseFloat(vb.split(' ')[2]);
     }
+    drawPath(S.src, dstK);
     highlightDots(S.src, dstK);
     updateStats(0, 0);
     saveS();
@@ -1986,12 +1994,13 @@ ${dots}
     S.log = [];
     S.previewDst = null;
     saveS();
-    drawPath(sk, dk);
+    // v70.9.0: zoom first so drawPath uses the correct currentZoom for stroke widths.
     if (el.svg) {
       const vb = getZoomedViewBox(sk, dk);
       el.svg.setAttribute('viewBox', vb);
       currentZoom = MAP_W / parseFloat(vb.split(' ')[2]);
     }
+    drawPath(sk, dk);
     highlightDots(sk, dk);
     if (isReturn) {
       const p = {
@@ -2372,13 +2381,15 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
         S.flying = false; S.src = S.dst; S.dst = null;
         S.phasesTriggered = {}; saveS();
       } else {
-        drawPath(S.src, S.dst);
+        // v70.9.0: zoom first so drawPath uses the correct currentZoom.
         if (el.svg) { const vb=getZoomedViewBox(S.src,S.dst); el.svg.setAttribute('viewBox',vb); currentZoom=MAP_W/parseFloat(vb.split(' ')[2]); }
+        drawPath(S.src, S.dst);
         highlightDots(S.src, S.dst);
       }
     } else if (S.previewDst) {
-      drawPath(S.src, S.previewDst);
+      // v70.9.0: zoom first so drawPath uses the correct currentZoom.
       if (el.svg) { const vb=getZoomedViewBox(S.src,S.previewDst); el.svg.setAttribute('viewBox',vb); currentZoom=MAP_W/parseFloat(vb.split(' ')[2]); }
+      drawPath(S.src, S.previewDst);
       highlightDots(S.src, S.previewDst);
     }
     showPg(S.page || 'main');
