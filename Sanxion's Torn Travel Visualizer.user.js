@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.6.0
+// @version      70.7.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -606,7 +606,7 @@ ${dots}
   let phRunId = {};
 
   function addLog(text) {
-    if ((S.airportClosed || S.inHospital || S.terrorThreat || S.stateOfEmergency) && !text.includes('Airport') && !text.includes('hospital') && !text.includes('discharged') && !text.includes('lockdown') && !text.includes('under attack')) return;
+    if ((S.airportClosed || S.inHospital || S.terrorThreat || S.stateOfEmergency) && !text.includes('Airport') && !text.includes('hospital') && !text.includes('discharged') && !text.includes('lockdown') && !text.includes('security')) return;
     S.log.push(text);
     if (S.log.length > 30) S.log.shift();
     renderLog();
@@ -762,7 +762,10 @@ ${dots}
     if (soeTextPresent) {
       if (!S.stateOfEmergency) {
         S.stateOfEmergency = true;
-        addLog('Torn City is in lockdown. Airport closed until further notice.');
+        addLog('Armed security turn you away.');
+        setTimeout(() => {
+          if (S.stateOfEmergency) addLog('Torn City is in lockdown. Airport closed until further notice.');
+        }, 1000);
         saveS();
       }
       if (el.status) {
@@ -784,7 +787,10 @@ ${dots}
     if (ttTextPresent) {
       if (!S.terrorThreat) {
         S.terrorThreat = true;
-        addLog('Torn City is under attack. Airport closed until further notice.');
+        addLog('Armed security point their weapons at you, denying entry.');
+        setTimeout(() => {
+          if (S.terrorThreat) addLog('Torn City is in lockdown. Airport closed until further notice.');
+        }, 1000);
         saveS();
       }
       if (el.status) {
@@ -991,7 +997,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.6.0</p>
+    <p class="ver-t">Version 70.7.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1083,6 +1089,7 @@ ${dots}
     try {
       const saved = GM_getValue('tcfv_radar', 0);
       radarMode = typeof saved === 'number' ? saved : (saved ? 1 : 0);
+      if (radarMode < 0 || radarMode >= RADAR_MODES.length) radarMode = 0;
       if (radarMode > 0) applyRadarMode(el.panel);
     } catch(e) {}
     if (S.min) {
@@ -1623,16 +1630,15 @@ ${dots}
      RADAR / DOMIN
   ───────────────────────────────────────────────────────────── */
 
+  // RADAR MODES (v70.7.0): simplified to 5 — normal, green, green glitch,
+  // white grey, white grey glitch. Glitch variants add jitter, flicker, and
+  // a moving scan line on top of the base radar styling.
   const RADAR_MODES = [
     null,
-    { name:'green', rc:'#00ff44', mid:'#006622', dark:'#000a00', line:'#004400', glow:'rgba(0,255,68,.3)', hue:90 },
-    { name:'yellow', rc:'#ffee00', mid:'#665500', dark:'#0a0a00', line:'#444400', glow:'rgba(255,238,0,.3)', hue:45 },
-    { name:'cyan', rc:'#00ffee', mid:'#006655', dark:'#000a09', line:'#004440', glow:'rgba(0,255,238,.3)', hue:170 },
-    { name:'blue', rc:'#4488ff', mid:'#1a3a88', dark:'#000518', line:'#1a3060', glow:'rgba(68,136,255,.3)', hue:200 },
-    { name:'purple', rc:'#cc44ff', mid:'#551a88', dark:'#080010', line:'#440088', glow:'rgba(204,68,255,.3)', hue:270 },
-    { name:'orange', rc:'#ff8800', mid:'#883300', dark:'#0a0500', line:'#662200', glow:'rgba(255,136,0,.3)', hue:20 },
-    { name:'red', rc:'#ff2244', mid:'#881122', dark:'#0a0005', line:'#660022', glow:'rgba(255,34,68,.3)', hue:0 },
-    { name:'grey', rc:'#cccccc', mid:'#666666', dark:'#0a0a0a', line:'#333333', glow:'rgba(200,200,200,.2)', hue:0 },
+    { name:'green', display:'green', rc:'#00ff44', mid:'#006622', dark:'#000a00', line:'#004400', glow:'rgba(0,255,68,.3)', hue:90, glitch:false },
+    { name:'green-glitch', display:'green glitch', rc:'#00ff44', mid:'#006622', dark:'#000a00', line:'#004400', glow:'rgba(0,255,68,.3)', hue:90, glitch:true },
+    { name:'white-grey', display:'white grey', rc:'#cccccc', mid:'#888888', dark:'#0a0a0a', line:'#444444', glow:'rgba(220,220,220,.3)', hue:0, glitch:false },
+    { name:'white-grey-glitch', display:'white grey glitch', rc:'#cccccc', mid:'#888888', dark:'#0a0a0a', line:'#444444', glow:'rgba(220,220,220,.3)', hue:0, glitch:true },
   ];
 
   let radarMode = 0;
@@ -1641,19 +1647,24 @@ ${dots}
     const mode = RADAR_MODES[radarMode];
     const btn = document.querySelector('#thb-radar');
     if (!mode) {
-      panel.classList.remove('radar-mode');
+      panel.classList.remove('radar-mode', 'radar-glitch');
       ['--rc','--rc-mid','--rc-dark','--rc-line','--rc-glow','--rc-filter'].forEach(v => panel.style.removeProperty(v));
       if (btn) { btn.classList.remove('ta'); btn.title = 'Overlay'; }
     } else {
       panel.classList.add('radar-mode');
+      panel.classList.toggle('radar-glitch', !!mode.glitch);
       panel.style.setProperty('--rc', mode.rc);
       panel.style.setProperty('--rc-mid', mode.mid);
       panel.style.setProperty('--rc-dark', mode.dark);
       panel.style.setProperty('--rc-line', mode.line);
       panel.style.setProperty('--rc-glow', mode.glow);
-      const g = mode.name === 'grey' ? 'grayscale(0.7) ' : '';
-      panel.style.setProperty('--rc-filter', `${g}sepia(1) saturate(4) hue-rotate(${mode.hue}deg) brightness(0.85)`);
-      if (btn) { btn.classList.add('ta'); btn.title = `Overlay (${mode.name})`; }
+      // White-grey uses pure greyscale; green uses sepia+hue-rotate tint chain.
+      if (mode.name.startsWith('white-grey')) {
+        panel.style.setProperty('--rc-filter', 'grayscale(1) brightness(0.95) contrast(1.05)');
+      } else {
+        panel.style.setProperty('--rc-filter', `sepia(1) saturate(4) hue-rotate(${mode.hue}deg) brightness(0.85)`);
+      }
+      if (btn) { btn.classList.add('ta'); btn.title = `Overlay (${mode.display})`; }
     }
     try { GM_setValue('tcfv_radar', radarMode); } catch(e) {}
   }
@@ -2272,6 +2283,50 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
 #tcfv.radar-mode .ver-t { color: var(--rc-mid) !important; }
 #tcfv.radar-mode #tcfv-author { color: var(--rc); }
 #tcfv.radar-mode #tcfv-author:hover { color: var(--rc); opacity: 0.7; }
+
+/* GLITCH OVERLAY (v70.7.0): adds jitter, flicker, and a moving scan line on
+   top of the base radar styling. Triggered when a *-glitch mode is active. */
+@keyframes tcfv-glitch-jitter {
+  0%, 92%, 100% { transform: translate(0, 0); }
+  93%          { transform: translate(-2px, 0); }
+  94%          { transform: translate(2px, 1px); }
+  95%          { transform: translate(-1px, -1px); }
+  96%          { transform: translate(1px, 1px); }
+}
+@keyframes tcfv-glitch-flash {
+  0%, 88%, 100% { opacity: 1; }
+  90%           { opacity: 0.55; }
+  91%           { opacity: 1; }
+  92%           { opacity: 0.85; }
+}
+@keyframes tcfv-glitch-scanline {
+  0%   { top: -4px; opacity: 0; }
+  8%   { opacity: 0.9; }
+  100% { top: 100%; opacity: 0.4; }
+}
+#tcfv.radar-glitch #tcfv-svg {
+  animation: tcfv-glitch-jitter 3.7s infinite steps(1);
+}
+#tcfv.radar-glitch #tcfv-bod {
+  animation: tcfv-glitch-flash 5.1s infinite;
+}
+#tcfv.radar-glitch #tcfv-mapbox {
+  position: relative;
+}
+#tcfv.radar-glitch #tcfv-mapbox::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(180deg, transparent, var(--rc), transparent);
+  box-shadow: 0 0 14px var(--rc);
+  animation: tcfv-glitch-scanline 2.3s linear infinite;
+  pointer-events: none;
+  z-index: 5;
+  opacity: 0.7;
+  mix-blend-mode: screen;
+}
 `);
   }
 
@@ -2337,9 +2392,15 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
       const am = '\x01Airport closed — you are in a <a href="https://www.torn.com/page.php?sid=racing" target="_blank" style="color:#ff6666;text-decoration:underline">race</a>.';
       S.log = [am];
     } else if (S.stateOfEmergency) {
-      S.log = ['Torn City is in lockdown. Airport closed until further notice.'];
+      S.log = [
+        'Armed security turn you away.',
+        'Torn City is in lockdown. Airport closed until further notice.',
+      ];
     } else if (S.terrorThreat) {
-      S.log = ['Torn City is under attack. Airport closed until further notice.'];
+      S.log = [
+        'Armed security point their weapons at you, denying entry.',
+        'Torn City is in lockdown. Airport closed until further notice.',
+      ];
     }
     injectCSS();
     buildHUD();
