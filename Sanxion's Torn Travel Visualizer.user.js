@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.23.0
+// @version      70.24.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1020,7 +1020,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.23.0</p>
+    <p class="ver-t">Version 70.24.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1276,10 +1276,12 @@ ${dots}
     return { isSmall, systems, maxNameLen, maxDetailLen };
   }
 
-  function diagSVGLarge(systems) {
+  function diagSVGLarge(systems, overrideCol) {
     const sysMap = {};
     systems.forEach(s => { sysMap[s.id] = s.status; });
-    const col = id => DIAG_STATUS_COLS[sysMap[id]] || '#444';
+    // v70.24.0: when an override colour is passed (maintenance/landed mode),
+    // every indicator uses it instead of looking up the RAG status colour.
+    const col = id => overrideCol || DIAG_STATUS_COLS[sysMap[id]] || '#444';
     return `<svg viewBox="0 0 280 200" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px">
   <rect width="280" height="200" fill="#050e05"/>
   <ellipse cx="140" cy="100" rx="13" ry="88" fill="none" stroke="#5ab0e8" stroke-width="1.5"/>
@@ -1307,10 +1309,10 @@ ${dots}
 </svg>`;
   }
 
-  function diagSVGSmall(systems) {
+  function diagSVGSmall(systems, overrideCol) {
     const sysMap = {};
     systems.forEach(s => { sysMap[s.id] = s.status; });
-    const col = id => DIAG_STATUS_COLS[sysMap[id]] || '#444';
+    const col = id => overrideCol || DIAG_STATUS_COLS[sysMap[id]] || '#444';
     return `<svg viewBox="0 0 280 190" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:190px">
   <rect width="280" height="190" fill="#050e05"/>
   <ellipse cx="140" cy="95" rx="10" ry="74" fill="none" stroke="#88ff44" stroke-width="1.5"/>
@@ -1342,6 +1344,11 @@ ${dots}
   // of which page the user is viewing) so the RAG-history chart on the
   // Diagnostics page reflects the full flight duration from takeoff to landing.
   let flightSampleTimer = null;
+  // v70.24.0: tracks whether the oscilloscope was last rendered in animated
+  // (S.flying === true) or stopped state. When the state flips, the partial-
+  // update branch of renderDiagPage rebuilds the oscilloscope SVG so the
+  // SMIL animations get added or removed as appropriate.
+  let lastOscFlyingState = null;
 
   function randomiseDiagnostics() {
     if (!S.diagnostics) return;
@@ -1494,23 +1501,60 @@ ${dots}
   // built at 2x the visible width so animating translate(-W,0) loops
   // seamlessly. SVG uses width="100%" + viewBox so the whole display scales
   // with the panel size.
+  // v70.24.0: waveforms are now music-style (amplitude envelope × harmonic
+  // mix of 3 sine components) rather than pure sines, and the lines have a
+  // slight CRT glow via a Gaussian-blur+merge filter. When the player is
+  // not flying (parked at an airport / abroad), the oscilloscope is stopped
+  // — all three traces flatten to a horizontal line and the SMIL animations
+  // are omitted.
   function renderOscilloscope() {
     const W = 400, H = 60;
-    const samples = 120;
+    const samples = 240;
     const totalW = W * 2;
-    const buildSine = (cyclesPerW, amp, phase) => {
+    const animated = !!S.flying;
+    // Build a music-like wave: an amplitude envelope (so the trace has loud
+    // and quiet sections) multiplied by a sum of three integer-frequency
+    // sine components. Integer frequencies + integer envCycles guarantee a
+    // seamless loop at x = W (because sin((x+W)/W * k * 2π) === sin(x/W * k * 2π)
+    // for integer k, and |sin(envCycles * kπ + φ)| === |sin(φ)| for integer k).
+    const buildMusicWave = (ampBase, freqLow, freqMid, freqHigh, envCycles, phase) => {
       let d = '';
       for (let i = 0; i <= samples; i++) {
         const x = (i / samples) * totalW;
-        const y = (H / 2) + amp * Math.sin((x / W) * cyclesPerW * 2 * Math.PI + phase);
+        const envelope = 0.35 + 0.65 * Math.abs(Math.sin((x / W) * envCycles * Math.PI + phase));
+        const wave =
+          0.55 * Math.sin((x / W) * freqLow * 2 * Math.PI + phase) +
+          0.30 * Math.sin((x / W) * freqMid * 2 * Math.PI + phase * 0.7) +
+          0.15 * Math.sin((x / W) * freqHigh * 2 * Math.PI + phase * 1.4);
+        const y = (H / 2) + ampBase * envelope * wave;
         d += (i === 0 ? 'M' : 'L') + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
       }
       return d;
     };
-    const wave1 = buildSine(3, 12, 0);
-    const wave2 = buildSine(5, 8, Math.PI / 3);
-    const wave3 = buildSine(2, 16, Math.PI / 1.5);
+    // Flat-line path for the stopped state. Drawn the same width as the
+    // animated paths so the SVG layout is identical.
+    const flatLine = `M0,${(H/2).toFixed(1)} L${totalW.toFixed(1)},${(H/2).toFixed(1)}`;
+    const wave1 = animated ? buildMusicWave(14, 3, 7, 17, 4, 0) : flatLine;
+    const wave2 = animated ? buildMusicWave(11, 2, 5, 11, 3, Math.PI/3) : flatLine;
+    const wave3 = animated ? buildMusicWave(16, 4, 9, 19, 5, Math.PI/1.5) : flatLine;
+    const animSegment = (dur) => animated
+      ? `<animateTransform attributeName="transform" type="translate" from="0,0" to="-${W},0" dur="${dur}" repeatCount="indefinite"/>`
+      : '';
+    const stoppedLabel = animated
+      ? ''
+      : `<text x="${W - 6}" y="${H - 4}" font-size="6" fill="#5a8a5a" font-family="monospace" letter-spacing="0.5" text-anchor="end">STOPPED</text>`;
     return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" width="100%" style="display:block">
+  <defs>
+    <filter id="tcfv-osc-glow" x="-10%" y="-50%" width="120%" height="200%">
+      <feGaussianBlur stdDeviation="1.2" result="b1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="0.4" result="b2"/>
+      <feMerge>
+        <feMergeNode in="b1"/>
+        <feMergeNode in="b2"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
   <rect width="${W}" height="${H}" fill="#040c08"/>
   <g stroke="#1a3a1a" stroke-width="0.4" opacity="0.55">
     <line x1="0" y1="${(H/4).toFixed(1)}" x2="${W}" y2="${(H/4).toFixed(1)}"/>
@@ -1521,15 +1565,13 @@ ${dots}
     <line x1="${(3*W/4).toFixed(1)}" y1="0" x2="${(3*W/4).toFixed(1)}" y2="${H}"/>
   </g>
   <clipPath id="tcfv-osc-clip"><rect x="0" y="0" width="${W}" height="${H}"/></clipPath>
-  <g clip-path="url(#tcfv-osc-clip)">
-    <g><path d="${wave3}" fill="none" stroke="#88ddff" stroke-width="0.8" opacity="0.7"/>
-      <animateTransform attributeName="transform" type="translate" from="0,0" to="-${W},0" dur="13s" repeatCount="indefinite"/></g>
-    <g><path d="${wave2}" fill="none" stroke="#ffcc44" stroke-width="0.8" opacity="0.75"/>
-      <animateTransform attributeName="transform" type="translate" from="0,0" to="-${W},0" dur="8s" repeatCount="indefinite"/></g>
-    <g><path d="${wave1}" fill="none" stroke="#44ff88" stroke-width="0.9" opacity="0.9"/>
-      <animateTransform attributeName="transform" type="translate" from="0,0" to="-${W},0" dur="5s" repeatCount="indefinite"/></g>
+  <g clip-path="url(#tcfv-osc-clip)" filter="url(#tcfv-osc-glow)">
+    <g><path d="${wave3}" fill="none" stroke="#88ddff" stroke-width="0.8" opacity="0.7"/>${animSegment('13s')}</g>
+    <g><path d="${wave2}" fill="none" stroke="#ffcc44" stroke-width="0.8" opacity="0.75"/>${animSegment('8s')}</g>
+    <g><path d="${wave1}" fill="none" stroke="#44ff88" stroke-width="0.9" opacity="0.9"/>${animSegment('5s')}</g>
   </g>
   <text x="6" y="10" font-size="6" fill="#5a8a5a" font-family="monospace" letter-spacing="0.5">OSC</text>
+  ${stoppedLabel}
 </svg>`;
   }
 
@@ -1626,17 +1668,31 @@ ${dots}
       const isGenericGreen = /^(Gear status normal|Down & locked indication clear|Hydraulics nominal|All three down & locked|Tyre pressure OK)$/.test(issue);
       gearDisplayDetail = (gearSys.status === 'green' || isGenericGreen) ? position : `${position} — ${issue}`;
     }
-    const schematic = d.isSmall ? diagSVGSmall(d.systems) : diagSVGLarge(d.systems);
+    // v70.24.0: when the player is not flying (parked at a city), all
+    // systems show as in maintenance mode rather than running. The
+    // schematic indicators, row dots, detail and status columns all switch
+    // to a grey "SHUTDOWN/MAINTENANCE" presentation. Flight Gear's detail
+    // becomes "RETRACTED" per spec rather than "SHUTDOWN".
+    const isLanded = !S.flying;
+    const greyCol = '#888888';
+    const schematic = d.isSmall ? diagSVGSmall(d.systems, isLanded ? greyCol : null) : diagSVGLarge(d.systems, isLanded ? greyCol : null);
     const acType = d.isSmall ? 'PRIVATE PLANE' : 'JUMBO JET';
     // v70.16.0: all three columns uppercased; gaps widened to 3 character
     // widths (~18px in the monospace stack) and the block is left-justified
     // rather than spanning the full row.
     const rows = d.systems.map(s => {
-      const col = DIAG_STATUS_COLS[s.status];
-      const label = s.status.toUpperCase();
-      const detailRaw = (s.id === 'gear' && gearDisplayDetail !== null) ? gearDisplayDetail : s.detail;
-      const detail = (detailRaw || '').toUpperCase();
+      let col, label, detail;
       const name = (s.name || '').toUpperCase();
+      if (isLanded) {
+        col = greyCol;
+        label = 'MAINTENANCE';
+        detail = (s.id === 'gear') ? 'RETRACTED' : 'SHUTDOWN';
+      } else {
+        col = DIAG_STATUS_COLS[s.status];
+        label = s.status.toUpperCase();
+        const detailRaw = (s.id === 'gear' && gearDisplayDetail !== null) ? gearDisplayDetail : s.detail;
+        detail = (detailRaw || '').toUpperCase();
+      }
       return `<div class="diag-row">
   <span class="diag-ind" style="background:${col}"></span>
   <span class="diag-name">${name}</span>
@@ -1659,7 +1715,11 @@ ${dots}
     // schematic) so the SMIL-animated oscilloscope keeps scrolling without
     // restarting every 10s when the randomiser fires. The first render (and
     // any render where the oscilloscope is missing) does a full rebuild.
+    // v70.24.0: also capture the current flying state so the partial-update
+    // branch can detect a takeoff/landing transition and swap the
+    // oscilloscope between music waveforms and stopped trace.
     const oscExists = !!document.getElementById('tcfv-diag-osc');
+    const currentlyFlying = !!S.flying;
     if (!oscExists) {
       inner.innerHTML = `<div class="diag-header">
   <span class="diag-title">&#9874; AIRCRAFT DIAGNOSTICS</span>
@@ -1691,7 +1751,15 @@ ${dots}
       const facEl = inner.querySelector('.diag-chart-faction');
       if (facEl) facEl.innerHTML = factionChart;
       // Oscilloscope intentionally left alone — its SMIL animations continue.
+      // v70.24.0: but if flight state has flipped (takeoff or landing), we
+      // need to swap between animated music waveforms and the flat
+      // stopped trace, so rebuild only in that case.
+      if (lastOscFlyingState !== currentlyFlying) {
+        const oscEl = document.getElementById('tcfv-diag-osc');
+        if (oscEl) oscEl.innerHTML = renderOscilloscope();
+      }
     }
+    lastOscFlyingState = currentlyFlying;
   }
 
   /* ─────────────────────────────────────────────────────────────
