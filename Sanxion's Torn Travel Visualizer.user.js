@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.18.0
+// @version      70.19.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1020,7 +1020,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.18.0</p>
+    <p class="ver-t">Version 70.19.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1256,7 +1256,24 @@ ${dots}
       const status = rnd();
       return { ...s, status, detail: pickDetail(s, status) };
     });
-    return { isSmall, systems };
+    // v70.19.0: pre-compute the widest possible name and detail strings
+    // across every status pool so the diag columns can be sized to the
+    // worst-case width rather than the current random selection. This stops
+    // the layout from jittering between randomiser ticks.
+    const gearPrefixLen = 'Gear retracted — '.length;
+    let maxNameLen = 0;
+    let maxDetailLen = 'Gear retracted'.length; // baseline (gear with green status, no suffix)
+    systems.forEach(s => {
+      maxNameLen = Math.max(maxNameLen, (s.name || '').length);
+      if (!s.detailsByStatus) return;
+      for (const arr of Object.values(s.detailsByStatus)) {
+        for (const item of arr) {
+          const len = (s.id === 'gear') ? (item.length + gearPrefixLen) : item.length;
+          if (len > maxDetailLen) maxDetailLen = len;
+        }
+      }
+    });
+    return { isSmall, systems, maxNameLen, maxDetailLen };
   }
 
   function diagSVGLarge(systems) {
@@ -1572,16 +1589,25 @@ ${dots}
     }).join('');
     const chart = renderFlightHistoryChart();
     const factionChart = renderFactionFlyingChart();
+    // v70.19.0: derive pixel widths from the precomputed character counts. The
+    // monospace stack averages ~5.4px per glyph at 9px font size; an extra
+    // small allowance protects against fractional rounding. Sizes are passed
+    // as CSS custom properties so the grid template can reference them.
+    const charPx = 5.4;
+    const nameW = Math.ceil((d.maxNameLen || 0) * charPx) + 4;
+    const detailW = Math.ceil((d.maxDetailLen || 0) * charPx) + 4;
+    const statusW = 56;
     // v70.18.0: faction chart sits to the right of the textual display
     // (rows), with the RAG/altitude chart underneath spanning the full window
     // width.
+    // v70.19.0: faction chart is fixed at half the panel width on the right.
     inner.innerHTML = `<div class="diag-header">
   <span class="diag-title">&#9874; AIRCRAFT DIAGNOSTICS</span>
   <span class="diag-type">${acType}</span>
 </div>
 <div class="diag-schematic">${schematic}</div>
 <div class="diag-systems-wrap">
-  <div class="diag-systems">${rows}</div>
+  <div class="diag-systems" style="--diag-name-w:${nameW}px;--diag-detail-w:${detailW}px;--diag-status-w:${statusW}px;">${rows}</div>
   <div class="diag-chart-faction">${factionChart}</div>
 </div>
 <div class="diag-chart-rag">${chart}</div>`;
@@ -1599,6 +1625,10 @@ ${dots}
   // v70.14.0: track previously-known flying faction members so we can fire
   // a takeoff notification when a new entry appears between polls.
   let prevFactionFlyingIds = new Set();
+  // v70.19.0: cache the previous poll's flying members keyed by id, so when
+  // they drop out of factionData on a subsequent poll (= they've landed) we
+  // still know their destination to put in the notification.
+  let prevFactionFlying = {};
   let factionFirstPollDone = false;
   let backgroundFactionTimer = null;
   let activeNotifyCount = 0;
@@ -1606,14 +1636,12 @@ ${dots}
   /**
    * v70.14.0: Show a small popup at the bottom-right of the map view when a
    * faction member takes off.
-   * v70.17.0: Stays for 2 minutes (per spec change from 4 seconds), plus a
-   * brief slide-in/slide-out at the edges. Click to dismiss immediately.
-   * The notification list lives inside a stack container with
-   * `flex-direction: column` and a bottom-anchored origin, so when one
-   * notification is dismissed the others reflow naturally without leaving
-   * positional gaps — no manual `bottom` offsets per notification.
+   * v70.17.0: Two-minute hold; click to dismiss; stack-container layout.
+   * v70.19.0: Hold time bumped to ten minutes (per spec); landing
+   * notifications added (see notifyFactionLanding). Both variants share the
+   * notifyFactionEvent core so notification semantics stay identical.
    */
-  function notifyFactionTakeoff(name, srcCity, dstCity) {
+  function notifyFactionEvent(text) {
     const mapbox = document.getElementById('tcfv-mapbox');
     if (!mapbox) return;
     let stack = mapbox.querySelector('.tcfv-notify-stack');
@@ -1629,7 +1657,7 @@ ${dots}
     icon.className = 'tcfv-notify-icon';
     icon.textContent = '\u2708';
     note.appendChild(icon);
-    note.appendChild(document.createTextNode(` ${name} has taken off from ${srcCity} headed for ${dstCity}`));
+    note.appendChild(document.createTextNode(` ${text}`));
     stack.appendChild(note);
     activeNotifyCount++;
     let removed = false;
@@ -1642,7 +1670,15 @@ ${dots}
       activeNotifyCount = Math.max(0, activeNotifyCount - 1);
     };
     note.addEventListener('click', removeNote);
-    timeoutId = setTimeout(removeNote, 120000);
+    timeoutId = setTimeout(removeNote, 600000);
+  }
+
+  function notifyFactionTakeoff(name, srcCity, dstCity) {
+    notifyFactionEvent(`${name} has taken off from ${srcCity} headed for ${dstCity}`);
+  }
+
+  function notifyFactionLanding(name, dstCity) {
+    notifyFactionEvent(`${name} has landed in ${dstCity}`);
   }
 
   function startBackgroundFactionPolling() {
@@ -1920,10 +1956,13 @@ ${dots}
           // v70.14.0: detect new takeoffs (members flying now who weren't
           // flying on the previous poll). Skip the first ever poll so we
           // don't notify for members who were already in the air on load.
+          // v70.19.0: also detect landings — members who were in the air on
+          // the previous poll but aren't any more.
           const currentFlyingIds = new Set(
             Object.keys(factionData).filter(id => id !== 'self_player')
           );
           if (factionFirstPollDone) {
+            // Takeoffs
             for (const id of currentFlyingIds) {
               if (!prevFactionFlyingIds.has(id)) {
                 const m = factionData[id];
@@ -1934,8 +1973,27 @@ ${dots}
                 }
               }
             }
+            // Landings — present in prev poll, gone from this one. We look up
+            // the destination from the cached snapshot since factionData has
+            // already discarded their flight entry.
+            for (const id of prevFactionFlyingIds) {
+              if (!currentFlyingIds.has(id)) {
+                const cached = prevFactionFlying[id];
+                if (cached && cached.dst) {
+                  const dstCity = DESTS[cached.dst]?.city || cached.dst;
+                  notifyFactionLanding(cached.name, dstCity);
+                }
+              }
+            }
           }
           prevFactionFlyingIds = currentFlyingIds;
+          // Refresh the cache from the just-parsed factionData so the next
+          // poll's landing detection has the destinations ready.
+          prevFactionFlying = {};
+          for (const id of currentFlyingIds) {
+            const m = factionData[id];
+            if (m) prevFactionFlying[id] = { name: m.name, dst: m.dst };
+          }
           factionFirstPollDone = true;
           // Only redraw the faction map/zoom/roster when faction view is on.
           if (factionFlightsOn) {
@@ -2710,9 +2768,10 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
   font-family: 'Courier New', monospace;
   line-height: 1.4;
   box-shadow: 0 4px 12px rgba(0, 80, 160, 0.4);
-  /* v70.17.0: 2 minute total — keyframes hold the box on-screen for almost
-     all of it, with a quick slide-in at the start and slide-out at the end. */
-  animation: tcfv-notify-show 120s ease-in-out forwards;
+  /* v70.19.0: 10 minute total per spec change — keyframes hold the box
+     on-screen for almost all of it, with a quick slide-in at the start
+     and slide-out at the end (~1.2s each). */
+  animation: tcfv-notify-show 600s ease-in-out forwards;
   pointer-events: auto;
   cursor: pointer;
   user-select: none;
@@ -2728,8 +2787,8 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
 }
 @keyframes tcfv-notify-show {
   0%    { transform: translateY(140%); opacity: 0; }
-  0.25% { transform: translateY(0);    opacity: 1; }
-  99.4% { transform: translateY(0);    opacity: 1; }
+  0.2%  { transform: translateY(0);    opacity: 1; }
+  99.8% { transform: translateY(0);    opacity: 1; }
   100%  { transform: translateY(140%); opacity: 0; }
 }
 #tcfv.radar-mode .tcfv-notify {
@@ -2746,16 +2805,28 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
 .diag-type { font-size: 9px; color: #336633; letter-spacing: 1px; }
 .diag-schematic { padding: 6px 8px 2px; border-bottom: 1px solid #0a2010; }
 /* v70.18.0: rows on the left + faction chart on the right (side-by-side),
-   then RAG chart underneath spanning the full window width. */
+   then RAG chart underneath spanning the full window width.
+   v70.19.0: faction chart is now fixed at exactly half the panel width on
+   the right hand side. Rows take the remaining space on the left and can
+   horizontally scroll if their max-data columns exceed it. */
 .diag-systems-wrap { display: flex; gap: 12px; padding: 6px 8px; align-items: flex-start; }
-.diag-systems { flex: 0 0 auto; }
-.diag-chart-faction { flex: 1 1 0; min-width: 180px; align-self: stretch; }
+.diag-systems { flex: 0 1 50%; min-width: 0; max-width: 50%; overflow-x: auto; }
+.diag-chart-faction { flex: 0 0 50%; align-self: stretch; min-width: 0; }
 .diag-chart-rag { padding: 0 8px 8px; }
 /* v70.17.0: each column auto-sizes to its longest content so no message
    gets truncated. column-gap supplies the 3-character spacing requirement. */
+/* v70.19.0: column widths driven by CSS variables set on the parent
+   .diag-systems wrapper. These are computed from the worst-case string length
+   in each system's detailsByStatus pool so the layout never jitters when the
+   randomiser picks shorter messages. Fallbacks keep things sane if variables
+   are unset (e.g. before generateDiagnostics has run). */
 .diag-row {
   display: grid;
-  grid-template-columns: 10px max-content max-content max-content;
+  grid-template-columns:
+    10px
+    var(--diag-name-w, 100px)
+    var(--diag-detail-w, 220px)
+    var(--diag-status-w, 56px);
   column-gap: 18px;
   align-items: center;
   padding: 3px 0;
