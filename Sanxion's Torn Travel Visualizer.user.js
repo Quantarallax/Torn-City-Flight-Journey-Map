@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.17.0
+// @version      70.18.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -540,11 +540,19 @@ ${dots}
   <polygon points="0,-1.5 -5,1.5 -4.5,2.5 0,0.5 4.5,2.5 5,1.5" fill="white" stroke="black" stroke-width="0.7"/>
   <polygon points="0,2.5 -2,4 -1.5,4.5 0,3.25 1.5,4.5 2,4" fill="white" stroke="black" stroke-width="0.6"/>`;
     } else {
+      // v70.18.0: prop_plane gets more white on the tail (enlarged horizontal
+      // stabiliser) and a richer propeller — a translucent motion-blur disc,
+      // a cool-tinted blade line (#bbd0e0 instead of pure black), and a small
+      // white hub on top. The "slight colour shift" comes from the cool grey/
+      // light-blue tones rather than the original solid black stroke.
       svgShape = `
   <ellipse cx="0" cy="0.5" rx="1" ry="3.5" fill="white" stroke="black" stroke-width="0.8"/>
   <polygon points="-4.5,-0.5 -4,0.5 4,0.5 4.5,-0.5" fill="white" stroke="black" stroke-width="0.7"/>
-  <polygon points="0,2.5 -1.5,4 -1,4.5 0,3.25 1,4.5 1.5,4" fill="white" stroke="black" stroke-width="0.6"/>
-  <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="black" stroke-width="1.2" stroke-linecap="round"/>`;
+  <polygon points="0,2.5 -2,4.2 -1.5,4.8 0,3.5 1.5,4.8 2,4.2" fill="white" stroke="black" stroke-width="0.55"/>
+  <polygon points="-0.5,3.8 0.5,3.8 0,4.6" fill="white" stroke="black" stroke-width="0.4"/>
+  <ellipse cx="0" cy="-4" rx="2.0" ry="0.55" fill="#dde8f5" stroke="none" opacity="0.55"/>
+  <line x1="-1.9" y1="-4" x2="1.9" y2="-4" stroke="#bbd0e0" stroke-width="1.3" stroke-linecap="round"/>
+  <circle cx="0" cy="-4" r="0.4" fill="white" stroke="black" stroke-width="0.35"/>`;
     }
     // v70.13.0: removed the stray +180 that prop_plane previously had — the
     // shape is drawn nose-up like the other planes, so `ang + 90` aligns it
@@ -1012,7 +1020,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.17.0</p>
+    <p class="ver-t">Version 70.18.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1350,9 +1358,11 @@ ${dots}
     const progress = total > 0 ? Math.min(1, Math.max(0, elapsed / total)) : 0;
     const timeLeft = Math.max(0, (S.arrTime || 0) - now);
     const alt = getAlt(progress, timeLeft);
-    // v70.17.0: also track number of faction members in the air at sample time.
+    // v70.17.0/v70.18.0: also track number of faction members flying and
+    // number abroad at sample time.
     const factionCount = Object.keys(factionData).filter(id => id !== 'self_player').length;
-    S.flightHistory.samples.push({ t: progress, g: counts.green, y: counts.yellow, r: counts.red, a: alt, f: factionCount });
+    const abroadCount = Object.keys(factionAbroad).length;
+    S.flightHistory.samples.push({ t: progress, g: counts.green, y: counts.yellow, r: counts.red, a: alt, f: factionCount, ab: abroadCount });
     // Hard cap to keep storage manageable for very long flights — keep the
     // first sample plus an evenly-spaced subset when capacity is reached.
     if (S.flightHistory.samples.length > 600) {
@@ -1447,10 +1457,10 @@ ${dots}
   <text x="${(W/2).toFixed(0)}" y="${H - 6}" font-size="7" fill="#5a8a5a" text-anchor="middle" font-family="monospace">FLIGHT TIME</text>
   <text x="${padL - 3}" y="${(padT + plotH/2 + 2).toFixed(0)}" font-size="6" fill="#5a8a5a" text-anchor="end" font-family="monospace" transform="rotate(-90 ${padL - 3} ${(padT + plotH/2 + 2).toFixed(0)})">COUNT</text>
   <text x="${W - padR + 3}" y="${(padT + plotH/2 + 2).toFixed(0)}" font-size="6" fill="#5a8a5a" text-anchor="start" font-family="monospace" transform="rotate(-90 ${W - padR + 3} ${(padT + plotH/2 + 2).toFixed(0)})">ALT FT</text>
-  <path d="${altPath}" fill="none" stroke="#cccccc" stroke-width="1.1" opacity="0.85"/>
   <path d="${greenPath}" fill="none" stroke="#44ff88" stroke-width="1.2" opacity="0.9"/>
   <path d="${yellowPath}" fill="none" stroke="#ffcc44" stroke-width="1.2" opacity="0.9"/>
   <path d="${redPath}" fill="none" stroke="#ff4444" stroke-width="1.2" opacity="0.9"/>
+  <path d="${altPath}" fill="none" stroke="#cccccc" stroke-width="1.1" opacity="0.85"/>
   <g transform="translate(${padL + 4}, ${padT + 2})" font-size="6" font-family="monospace">
     <text x="0" y="6" fill="#44ff88">&#9472; GREEN</text>
     <text x="0" y="14" fill="#ffcc44">&#9472; YELLOW</text>
@@ -1461,40 +1471,43 @@ ${dots}
 </svg>`;
   }
 
-  // v70.17.0: faction-members-flying chart positioned on the right hand side
-  // of the diagnostics page. Same time axis as the RAG chart, updated at the
-  // same 30s sampler interval. Y axis scales to the highest count seen
-  // (minimum 5) so the curve always has room to breathe.
+  // v70.17.0/v70.18.0: faction-activity chart on the right of the textual
+  // display. Left Y axis = number of faction members currently flying. Right
+  // Y axis = number abroad. Both curves share the same flight-time X axis and
+  // are sampled in sync with the RAG chart (every 30s during the flight).
   function renderFactionFlyingChart() {
     const W = 200, H = 180;
-    const padL = 24, padR = 12, padT = 14, padB = 22;
+    const padL = 24, padR = 24, padT = 14, padB = 22;
     const plotW = W - padL - padR;
     const plotH = H - padT - padB;
     const samples = (S.flightHistory && S.flightHistory.samples) || [];
-    const peakFaction = samples.reduce((mx, s) => Math.max(mx, s.f || 0), 0);
-    const maxCount = Math.max(5, peakFaction);
+    const peakFly = samples.reduce((mx, s) => Math.max(mx, s.f || 0), 0);
+    const peakAb  = samples.reduce((mx, s) => Math.max(mx, s.ab || 0), 0);
+    const maxFly = Math.max(5, peakFly);
+    const maxAb  = Math.max(5, peakAb);
 
-    let factionPath = '';
-    if (samples.length) {
+    const buildPath = (getValue, max) => {
+      if (!samples.length) return '';
       const pts = samples.map(s => ({
         x: padL + s.t * plotW,
-        y: padT + plotH - ((s.f || 0) / maxCount) * plotH,
+        y: padT + plotH - (getValue(s) / max) * plotH,
       }));
-      if (pts.length === 1) {
-        factionPath = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
-      } else {
-        factionPath = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
-        for (let i = 1; i < pts.length; i++) {
-          const prev = pts[i-1];
-          const cur = pts[i];
-          const mx = ((prev.x + cur.x) / 2).toFixed(1);
-          const my = ((prev.y + cur.y) / 2).toFixed(1);
-          factionPath += ` Q ${prev.x.toFixed(1)} ${prev.y.toFixed(1)} ${mx} ${my}`;
-        }
-        const last = pts[pts.length - 1];
-        factionPath += ` L ${last.x.toFixed(1)} ${last.y.toFixed(1)}`;
+      if (pts.length === 1) return `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+      let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+      for (let i = 1; i < pts.length; i++) {
+        const prev = pts[i-1];
+        const cur = pts[i];
+        const mx = ((prev.x + cur.x) / 2).toFixed(1);
+        const my = ((prev.y + cur.y) / 2).toFixed(1);
+        d += ` Q ${prev.x.toFixed(1)} ${prev.y.toFixed(1)} ${mx} ${my}`;
       }
-    }
+      const last = pts[pts.length - 1];
+      d += ` L ${last.x.toFixed(1)} ${last.y.toFixed(1)}`;
+      return d;
+    };
+
+    const flyPath  = buildPath(s => s.f  || 0, maxFly);
+    const abPath   = buildPath(s => s.ab || 0, maxAb);
 
     const emptyMsg = samples.length === 0
       ? `<text x="${W/2}" y="${H/2}" font-size="9" fill="#446" text-anchor="middle" font-family="monospace">NO DATA</text>`
@@ -1504,13 +1517,19 @@ ${dots}
   <rect width="${W}" height="${H}" fill="#050e05"/>
   <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H - padB}" stroke="#2a4a2a" stroke-width="0.6"/>
   <line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}" stroke="#2a4a2a" stroke-width="0.6"/>
-  <text x="${padL - 3}" y="${padT + 4}" font-size="7" fill="#5a8a5a" text-anchor="end" font-family="monospace">${maxCount}</text>
+  <line x1="${W - padR}" y1="${padT}" x2="${W - padR}" y2="${H - padB}" stroke="#2a4a2a" stroke-width="0.6"/>
+  <text x="${padL - 3}" y="${padT + 4}" font-size="7" fill="#5a8a5a" text-anchor="end" font-family="monospace">${maxFly}</text>
   <text x="${padL - 3}" y="${H - padB + 2}" font-size="7" fill="#5a8a5a" text-anchor="end" font-family="monospace">0</text>
+  <text x="${W - padR + 3}" y="${padT + 4}" font-size="7" fill="#5a8a5a" text-anchor="start" font-family="monospace">${maxAb}</text>
+  <text x="${W - padR + 3}" y="${H - padB + 2}" font-size="7" fill="#5a8a5a" text-anchor="start" font-family="monospace">0</text>
   <text x="${(W/2).toFixed(0)}" y="${H - 6}" font-size="7" fill="#5a8a5a" text-anchor="middle" font-family="monospace">FLIGHT TIME</text>
-  <text x="${padL - 3}" y="${(padT + plotH/2 + 2).toFixed(0)}" font-size="6" fill="#5a8a5a" text-anchor="end" font-family="monospace" transform="rotate(-90 ${padL - 3} ${(padT + plotH/2 + 2).toFixed(0)})">FACTION FLYING</text>
-  <path d="${factionPath}" fill="none" stroke="#88ddff" stroke-width="1.2" opacity="0.9"/>
+  <text x="${padL - 3}" y="${(padT + plotH/2 + 2).toFixed(0)}" font-size="6" fill="#5a8a5a" text-anchor="end" font-family="monospace" transform="rotate(-90 ${padL - 3} ${(padT + plotH/2 + 2).toFixed(0)})">FLYING</text>
+  <text x="${W - padR + 3}" y="${(padT + plotH/2 + 2).toFixed(0)}" font-size="6" fill="#5a8a5a" text-anchor="start" font-family="monospace" transform="rotate(-90 ${W - padR + 3} ${(padT + plotH/2 + 2).toFixed(0)})">ABROAD</text>
+  <path d="${abPath}" fill="none" stroke="#ffaa66" stroke-width="1.2" opacity="0.9"/>
+  <path d="${flyPath}" fill="none" stroke="#88ddff" stroke-width="1.2" opacity="0.9"/>
   <g transform="translate(${padL + 4}, ${padT + 2})" font-size="6" font-family="monospace">
-    <text x="0" y="6" fill="#88ddff">&#9472; MEMBERS</text>
+    <text x="0" y="6" fill="#88ddff">&#9472; FLYING</text>
+    <text x="0" y="14" fill="#ffaa66">&#9472; ABROAD</text>
   </g>
   ${emptyMsg}
 </svg>`;
@@ -1553,16 +1572,19 @@ ${dots}
     }).join('');
     const chart = renderFlightHistoryChart();
     const factionChart = renderFactionFlyingChart();
+    // v70.18.0: faction chart sits to the right of the textual display
+    // (rows), with the RAG/altitude chart underneath spanning the full window
+    // width.
     inner.innerHTML = `<div class="diag-header">
   <span class="diag-title">&#9874; AIRCRAFT DIAGNOSTICS</span>
   <span class="diag-type">${acType}</span>
 </div>
 <div class="diag-schematic">${schematic}</div>
-<div class="diag-systems">${rows}</div>
-<div class="diag-charts-row">
-  <div class="diag-chart-rag">${chart}</div>
+<div class="diag-systems-wrap">
+  <div class="diag-systems">${rows}</div>
   <div class="diag-chart-faction">${factionChart}</div>
-</div>`;
+</div>
+<div class="diag-chart-rag">${chart}</div>`;
   }
 
   /* ─────────────────────────────────────────────────────────────
@@ -2723,12 +2745,12 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
 .diag-title { font-size: 9px; color: #44ff88; letter-spacing: 2.5px; text-transform: uppercase; }
 .diag-type { font-size: 9px; color: #336633; letter-spacing: 1px; }
 .diag-schematic { padding: 6px 8px 2px; border-bottom: 1px solid #0a2010; }
-/* v70.17.0: rows take full width on top; charts sit underneath in their own
-   row (RAG wide left, faction flying chart on the right). */
-.diag-systems { padding: 6px 8px; }
-.diag-charts-row { display: flex; gap: 8px; padding: 6px 8px; }
-.diag-chart-rag { flex: 7 1 0; min-width: 220px; }
-.diag-chart-faction { flex: 3 1 0; min-width: 130px; }
+/* v70.18.0: rows on the left + faction chart on the right (side-by-side),
+   then RAG chart underneath spanning the full window width. */
+.diag-systems-wrap { display: flex; gap: 12px; padding: 6px 8px; align-items: flex-start; }
+.diag-systems { flex: 0 0 auto; }
+.diag-chart-faction { flex: 1 1 0; min-width: 180px; align-self: stretch; }
+.diag-chart-rag { padding: 0 8px 8px; }
 /* v70.17.0: each column auto-sizes to its longest content so no message
    gets truncated. column-gap supplies the 3-character spacing requirement. */
 .diag-row {
