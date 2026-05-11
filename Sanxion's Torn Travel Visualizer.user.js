@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.9.0
+// @version      70.10.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1004,7 +1004,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.9.0</p>
+    <p class="ver-t">Version 70.10.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1060,7 +1060,8 @@ ${dots}
     };
     panel.style.left = S.px + 'px';
     panel.style.top = S.py + 'px';
-    makeDrag(panel, panel.querySelector('#tcfv-hdr'));
+    // v70.10.0: drag from anywhere inside the panel (exclusions handled in makeDrag).
+    makeDrag(panel, panel);
     makeResize(panel, panel.querySelector('#tcfv-resize-handle'));
     panel.querySelector('#thb-min').addEventListener('click', () => doMin(false));
     panel.querySelector('#thb-radar').addEventListener('click', doRadar);
@@ -1708,7 +1709,10 @@ ${dots}
   function makeDrag(panel, handle) {
     let drag = false, ox = 0, oy = 0;
     handle.addEventListener('mousedown', e => {
-      if (e.target.closest('button')) return;
+      // v70.10.0: drag handle is now the whole panel, so exclude interactive
+      // elements (buttons, inputs, links, sliders) plus the resize handle and
+      // the log area (keeps text selection working in commentary).
+      if (e.target.closest('button, input, textarea, select, a, #tcfv-resize-handle, #tcfv-log')) return;
       drag = true; ox = e.clientX - panel.offsetLeft; oy = e.clientY - panel.offsetTop;
       e.preventDefault();
       e.stopPropagation();
@@ -2136,7 +2140,10 @@ ${dots}
   resize: none;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* v70.10.0: whole panel is draggable; child elements override the cursor where appropriate. */
+  cursor: move;
 }
+#tcfv-log { cursor: text; }
 #tcfv * {
   font-family: 'Courier New', Courier, 'Lucida Console', monospace !important;
 }
