@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.20.0
+// @version      70.21.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1020,7 +1020,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.20.0</p>
+    <p class="ver-t">Version 70.21.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1462,7 +1462,7 @@ ${dots}
       ? `<text x="${W/2}" y="${H/2}" font-size="9" fill="#446" text-anchor="middle" font-family="monospace">NO FLIGHT DATA</text>`
       : '';
 
-    return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;display:block">
+    return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" width="100%" style="display:block">
   <rect width="${W}" height="${H}" fill="#050e05"/>
   <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H - padB}" stroke="#2a4a2a" stroke-width="0.6"/>
   <line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}" stroke="#2a4a2a" stroke-width="0.6"/>
@@ -1488,26 +1488,76 @@ ${dots}
 </svg>`;
   }
 
+  // v70.21.0: oscilloscope display for the diagnostics page. Three sine waves
+  // at different frequencies, amplitudes, and phases, each scrolling
+  // horizontally at a different speed via SMIL translate. The wave paths are
+  // built at 2x the visible width so animating translate(-W,0) loops
+  // seamlessly. SVG uses width="100%" + viewBox so the whole display scales
+  // with the panel size.
+  function renderOscilloscope() {
+    const W = 400, H = 60;
+    const samples = 120;
+    const totalW = W * 2;
+    const buildSine = (cyclesPerW, amp, phase) => {
+      let d = '';
+      for (let i = 0; i <= samples; i++) {
+        const x = (i / samples) * totalW;
+        const y = (H / 2) + amp * Math.sin((x / W) * cyclesPerW * 2 * Math.PI + phase);
+        d += (i === 0 ? 'M' : 'L') + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
+      }
+      return d;
+    };
+    const wave1 = buildSine(3, 12, 0);
+    const wave2 = buildSine(5, 8,  Math.PI / 3);
+    const wave3 = buildSine(2, 16, Math.PI / 1.5);
+    return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" width="100%" style="display:block">
+  <rect width="${W}" height="${H}" fill="#040c08"/>
+  <g stroke="#1a3a1a" stroke-width="0.4" opacity="0.55">
+    <line x1="0" y1="${(H/4).toFixed(1)}" x2="${W}" y2="${(H/4).toFixed(1)}"/>
+    <line x1="0" y1="${(H/2).toFixed(1)}" x2="${W}" y2="${(H/2).toFixed(1)}"/>
+    <line x1="0" y1="${(3*H/4).toFixed(1)}" x2="${W}" y2="${(3*H/4).toFixed(1)}"/>
+    <line x1="${(W/4).toFixed(1)}" y1="0" x2="${(W/4).toFixed(1)}" y2="${H}"/>
+    <line x1="${(W/2).toFixed(1)}" y1="0" x2="${(W/2).toFixed(1)}" y2="${H}"/>
+    <line x1="${(3*W/4).toFixed(1)}" y1="0" x2="${(3*W/4).toFixed(1)}" y2="${H}"/>
+  </g>
+  <clipPath id="tcfv-osc-clip"><rect x="0" y="0" width="${W}" height="${H}"/></clipPath>
+  <g clip-path="url(#tcfv-osc-clip)">
+    <g><path d="${wave3}" fill="none" stroke="#88ddff" stroke-width="0.8" opacity="0.7"/>
+      <animateTransform attributeName="transform" type="translate" from="0,0" to="-${W},0" dur="13s" repeatCount="indefinite"/></g>
+    <g><path d="${wave2}" fill="none" stroke="#ffcc44" stroke-width="0.8" opacity="0.75"/>
+      <animateTransform attributeName="transform" type="translate" from="0,0" to="-${W},0" dur="8s" repeatCount="indefinite"/></g>
+    <g><path d="${wave1}" fill="none" stroke="#44ff88" stroke-width="0.9" opacity="0.9"/>
+      <animateTransform attributeName="transform" type="translate" from="0,0" to="-${W},0" dur="5s" repeatCount="indefinite"/></g>
+  </g>
+  <text x="6" y="10" font-size="6" fill="#5a8a5a" font-family="monospace" letter-spacing="0.5">OSC</text>
+</svg>`;
+  }
+
   // v70.17.0/v70.18.0: faction-activity chart on the right of the textual
   // display. Left Y axis = number of faction members currently flying. Right
   // Y axis = number abroad. Both curves share the same flight-time X axis and
   // are sampled in sync with the RAG chart (every 30s during the flight).
+  // v70.21.0: both axes now share the same top value (max of either curve's
+  // peak, minimum 5) so the scale matches, and integer tick labels are drawn
+  // for every value from 0 to that maximum. viewBox sized to match the RAG
+  // chart so when they sit side-by-side at 50/50 they render at identical
+  // heights including their axis labels.
   function renderFactionFlyingChart() {
-    const W = 200, H = 180;
-    const padL = 24, padR = 24, padT = 14, padB = 22;
+    const W = 420, H = 180;
+    const padL = 30, padR = 30, padT = 14, padB = 22;
     const plotW = W - padL - padR;
     const plotH = H - padT - padB;
     const samples = (S.flightHistory && S.flightHistory.samples) || [];
     const peakFly = samples.reduce((mx, s) => Math.max(mx, s.f || 0), 0);
     const peakAb  = samples.reduce((mx, s) => Math.max(mx, s.ab || 0), 0);
-    const maxFly = Math.max(5, peakFly);
-    const maxAb  = Math.max(5, peakAb);
+    // v70.21.0: single shared maximum so both axes show the same top number.
+    const maxCount = Math.max(5, peakFly, peakAb);
 
-    const buildPath = (getValue, max) => {
+    const buildPath = (getValue) => {
       if (!samples.length) return '';
       const pts = samples.map(s => ({
         x: padL + s.t * plotW,
-        y: padT + plotH - (getValue(s) / max) * plotH,
+        y: padT + plotH - (getValue(s) / maxCount) * plotH,
       }));
       if (pts.length === 1) return `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
       let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
@@ -1523,25 +1573,32 @@ ${dots}
       return d;
     };
 
-    const flyPath  = buildPath(s => s.f  || 0, maxFly);
-    const abPath   = buildPath(s => s.ab || 0, maxAb);
+    const flyPath = buildPath(s => s.f  || 0);
+    const abPath  = buildPath(s => s.ab || 0);
+
+    // v70.21.0: tick label every integer from 0..maxCount on both axes. If
+    // maxCount is huge, drop every other label so they don't overlap.
+    const tickStep = (maxCount > 12) ? 2 : 1;
+    let ticksMarkup = '';
+    for (let v = 0; v <= maxCount; v += tickStep) {
+      const y = (padT + plotH - (v / maxCount) * plotH).toFixed(1);
+      ticksMarkup += `<text x="${padL - 3}" y="${y}" font-size="6" fill="#5a8a5a" text-anchor="end" dominant-baseline="middle" font-family="monospace">${v}</text>`;
+      ticksMarkup += `<text x="${W - padR + 3}" y="${y}" font-size="6" fill="#5a8a5a" text-anchor="start" dominant-baseline="middle" font-family="monospace">${v}</text>`;
+    }
 
     const emptyMsg = samples.length === 0
       ? `<text x="${W/2}" y="${H/2}" font-size="9" fill="#446" text-anchor="middle" font-family="monospace">NO DATA</text>`
       : '';
 
-    return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;display:block">
+    return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" width="100%" style="display:block">
   <rect width="${W}" height="${H}" fill="#050e05"/>
   <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H - padB}" stroke="#2a4a2a" stroke-width="0.6"/>
   <line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}" stroke="#2a4a2a" stroke-width="0.6"/>
   <line x1="${W - padR}" y1="${padT}" x2="${W - padR}" y2="${H - padB}" stroke="#2a4a2a" stroke-width="0.6"/>
-  <text x="${padL - 3}" y="${padT + 4}" font-size="7" fill="#5a8a5a" text-anchor="end" font-family="monospace">${maxFly}</text>
-  <text x="${padL - 3}" y="${H - padB + 2}" font-size="7" fill="#5a8a5a" text-anchor="end" font-family="monospace">0</text>
-  <text x="${W - padR + 3}" y="${padT + 4}" font-size="7" fill="#5a8a5a" text-anchor="start" font-family="monospace">${maxAb}</text>
-  <text x="${W - padR + 3}" y="${H - padB + 2}" font-size="7" fill="#5a8a5a" text-anchor="start" font-family="monospace">0</text>
+  ${ticksMarkup}
   <text x="${(W/2).toFixed(0)}" y="${H - 6}" font-size="7" fill="#5a8a5a" text-anchor="middle" font-family="monospace">FLIGHT TIME</text>
-  <text x="${padL - 3}" y="${(padT + plotH/2 + 2).toFixed(0)}" font-size="6" fill="#5a8a5a" text-anchor="end" font-family="monospace" transform="rotate(-90 ${padL - 3} ${(padT + plotH/2 + 2).toFixed(0)})">FLYING</text>
-  <text x="${W - padR + 3}" y="${(padT + plotH/2 + 2).toFixed(0)}" font-size="6" fill="#5a8a5a" text-anchor="start" font-family="monospace" transform="rotate(-90 ${W - padR + 3} ${(padT + plotH/2 + 2).toFixed(0)})">ABROAD</text>
+  <text x="${padL - 18}" y="${(padT + plotH/2 + 2).toFixed(0)}" font-size="6" fill="#5a8a5a" text-anchor="middle" font-family="monospace" transform="rotate(-90 ${padL - 18} ${(padT + plotH/2 + 2).toFixed(0)})">FLYING</text>
+  <text x="${W - padR + 18}" y="${(padT + plotH/2 + 2).toFixed(0)}" font-size="6" fill="#5a8a5a" text-anchor="middle" font-family="monospace" transform="rotate(-90 ${W - padR + 18} ${(padT + plotH/2 + 2).toFixed(0)})">ABROAD</text>
   <path d="${abPath}" fill="none" stroke="#ffaa66" stroke-width="1.2" opacity="0.9"/>
   <path d="${flyPath}" fill="none" stroke="#88ddff" stroke-width="1.2" opacity="0.9"/>
   <g transform="translate(${padL + 4}, ${padT + 2})" font-size="6" font-family="monospace">
@@ -1597,21 +1654,44 @@ ${dots}
     const nameW = Math.ceil((d.maxNameLen || 0) * charPx) + 4;
     const detailW = Math.ceil((d.maxDetailLen || 0) * charPx) + 4;
     const statusW = 56;
-    // v70.20.0: rows take the full window width on top. Both charts live
-    // side-by-side in a row underneath, each at exactly half the window so
-    // RAG sits on the left and faction on the right per spec. SVGs use
-    // `width="100%"` with their viewBox, so they scale when the panel is
-    // resized.
-    inner.innerHTML = `<div class="diag-header">
+    // v70.21.0: smart rebuild — if the page already has the oscilloscope DOM
+    // in place, only refresh the dynamic content (rows, charts, header
+    // schematic) so the SMIL-animated oscilloscope keeps scrolling without
+    // restarting every 10s when the randomiser fires. The first render (and
+    // any render where the oscilloscope is missing) does a full rebuild.
+    const oscExists = !!document.getElementById('tcfv-diag-osc');
+    if (!oscExists) {
+      inner.innerHTML = `<div class="diag-header">
   <span class="diag-title">&#9874; AIRCRAFT DIAGNOSTICS</span>
   <span class="diag-type">${acType}</span>
 </div>
 <div class="diag-schematic">${schematic}</div>
-<div class="diag-systems" style="--diag-name-w:${nameW}px;--diag-detail-w:${detailW}px;--diag-status-w:${statusW}px;">${rows}</div>
+<div class="diag-rows-osc">
+  <div class="diag-systems" style="--diag-name-w:${nameW}px;--diag-detail-w:${detailW}px;--diag-status-w:${statusW}px;">${rows}</div>
+  <div class="diag-osc" id="tcfv-diag-osc">${renderOscilloscope()}</div>
+</div>
 <div class="diag-charts-row">
   <div class="diag-chart-rag">${chart}</div>
   <div class="diag-chart-faction">${factionChart}</div>
 </div>`;
+    } else {
+      const typeEl = inner.querySelector('.diag-type');
+      if (typeEl) typeEl.textContent = acType;
+      const schemEl = inner.querySelector('.diag-schematic');
+      if (schemEl) schemEl.innerHTML = schematic;
+      const rowsEl = inner.querySelector('.diag-systems');
+      if (rowsEl) {
+        rowsEl.style.setProperty('--diag-name-w', `${nameW}px`);
+        rowsEl.style.setProperty('--diag-detail-w', `${detailW}px`);
+        rowsEl.style.setProperty('--diag-status-w', `${statusW}px`);
+        rowsEl.innerHTML = rows;
+      }
+      const ragEl = inner.querySelector('.diag-chart-rag');
+      if (ragEl) ragEl.innerHTML = chart;
+      const facEl = inner.querySelector('.diag-chart-faction');
+      if (facEl) facEl.innerHTML = factionChart;
+      // Oscilloscope intentionally left alone — its SMIL animations continue.
+    }
   }
 
   /* ─────────────────────────────────────────────────────────────
@@ -2805,12 +2885,15 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
 .diag-title { font-size: 9px; color: #44ff88; letter-spacing: 2.5px; text-transform: uppercase; }
 .diag-type { font-size: 9px; color: #336633; letter-spacing: 1px; }
 .diag-schematic { padding: 6px 8px 2px; border-bottom: 1px solid #0a2010; }
-/* v70.20.0: rows take full window width on top; underneath, RAG chart on the
-   left half and faction chart on the right half. Both halves scale with the
-   panel — SVGs use width="100%" + viewBox to keep their aspect ratios when
-   the user resizes. */
-.diag-systems { padding: 6px 8px; overflow-x: auto; }
-.diag-charts-row { display: flex; gap: 8px; padding: 6px 8px 8px; align-items: stretch; }
+/* v70.21.0: rows on the left, oscilloscope to the right of them filling the
+   remaining width. Underneath, RAG | faction at 50/50. Both bottom charts
+   share the same viewBox aspect (420x180) so they render at the same height
+   when their containers are equal width, and they scale together as the
+   panel resizes (SVG width="100%" + viewBox does the work). */
+.diag-rows-osc { display: flex; gap: 12px; padding: 6px 8px; align-items: stretch; }
+.diag-systems { flex: 0 0 auto; min-width: 0; overflow-x: auto; }
+.diag-osc { flex: 1 1 0; min-width: 100px; align-self: stretch; }
+.diag-charts-row { display: flex; gap: 8px; padding: 0 8px 8px; align-items: stretch; }
 .diag-chart-rag { flex: 1 1 0; min-width: 0; }
 .diag-chart-faction { flex: 1 1 0; min-width: 0; }
 /* v70.17.0: each column auto-sizes to its longest content so no message
