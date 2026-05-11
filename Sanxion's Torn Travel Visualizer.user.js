@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.21.0
+// @version      70.23.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1020,7 +1020,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.21.0</p>
+    <p class="ver-t">Version 70.23.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1453,10 +1453,10 @@ ${dots}
       return d;
     };
 
-    const greenPath  = buildPath(s => s.g, maxCount);
+    const greenPath = buildPath(s => s.g, maxCount);
     const yellowPath = buildPath(s => s.y, maxCount);
-    const redPath    = buildPath(s => s.r, maxCount);
-    const altPath    = buildPath(s => s.a, maxAlt);
+    const redPath = buildPath(s => s.r, maxCount);
+    const altPath = buildPath(s => s.a, maxAlt);
 
     const emptyMsg = samples.length === 0
       ? `<text x="${W/2}" y="${H/2}" font-size="9" fill="#446" text-anchor="middle" font-family="monospace">NO FLIGHT DATA</text>`
@@ -1508,7 +1508,7 @@ ${dots}
       return d;
     };
     const wave1 = buildSine(3, 12, 0);
-    const wave2 = buildSine(5, 8,  Math.PI / 3);
+    const wave2 = buildSine(5, 8, Math.PI / 3);
     const wave3 = buildSine(2, 16, Math.PI / 1.5);
     return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" width="100%" style="display:block">
   <rect width="${W}" height="${H}" fill="#040c08"/>
@@ -1549,7 +1549,7 @@ ${dots}
     const plotH = H - padT - padB;
     const samples = (S.flightHistory && S.flightHistory.samples) || [];
     const peakFly = samples.reduce((mx, s) => Math.max(mx, s.f || 0), 0);
-    const peakAb  = samples.reduce((mx, s) => Math.max(mx, s.ab || 0), 0);
+    const peakAb = samples.reduce((mx, s) => Math.max(mx, s.ab || 0), 0);
     // v70.21.0: single shared maximum so both axes show the same top number.
     const maxCount = Math.max(5, peakFly, peakAb);
 
@@ -1573,8 +1573,8 @@ ${dots}
       return d;
     };
 
-    const flyPath = buildPath(s => s.f  || 0);
-    const abPath  = buildPath(s => s.ab || 0);
+    const flyPath = buildPath(s => s.f || 0);
+    const abPath = buildPath(s => s.ab || 0);
 
     // v70.21.0: tick label every integer from 0..maxCount on both axes. If
     // maxCount is huge, drop every other label so they don't overlap.
@@ -1873,11 +1873,16 @@ ${dots}
       const dp2 = DESTS[destKey2];
       if (!dp2) continue;
       const dp2pos = toXY(dp2.lon, dp2.lat);
-      abNames.forEach((nm2, ni2) => {
+      // v70.22.0: was a `.forEach(...)` callback — eslint flagged no-loop-func
+      // because forEach creates a fresh function on every outer loop pass.
+      // Plain for-loop is identical semantically and has no captured-closure
+      // concern.
+      for (let ni2 = 0; ni2 < abNames.length; ni2++) {
+        const nm2 = abNames[ni2];
         const yOff2 = (ni2 - (abNames.length - 1) / 2) * 9;
         html += '<circle cx="' + dp2pos.x.toFixed(1) + '" cy="' + dp2pos.y.toFixed(1) + '" r="4" fill="#44cc66" stroke="#226644" stroke-width="0.8" opacity="0.8"/>';
         html += '<text x="' + (dp2pos.x + 8).toFixed(1) + '" y="' + (dp2pos.y + yOff2 + 2).toFixed(1) + '" fill="white" font-size="7" font-family="monospace" opacity="0.85">' + nm2 + '</text>';
-      });
+      }
     }
     g.innerHTML = html;
   }
@@ -1988,7 +1993,7 @@ ${dots}
               const toM = desc.match(/traveling from .+ to (.+)$/i);
               const fromM = desc.match(/traveling from (.+?) to /i);
               const travDest = toM ? toM[1].trim() : '';
-              const travSrc  = fromM ? fromM[1].trim() : '';
+              const travSrc = fromM ? fromM[1].trim() : '';
               const dk3 = matchDest(travDest);
               const sk3 = travSrc ? matchDest(travSrc) : null;
               if (dk3) {
@@ -2152,7 +2157,7 @@ ${dots}
         return;
       }
       if (el.pgMain) el.pgMain.style.display = 'flex';
-      if (el.pgSet)  el.pgSet.style.display  = 'none';
+      if (el.pgSet) el.pgSet.style.display = 'none';
       if (el.pgCred) el.pgCred.style.display = 'none';
       if (el.pgMore) el.pgMore.style.display = 'none';
       if (el.pgDiag) el.pgDiag.style.display = 'none';
@@ -2888,14 +2893,19 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
 /* v70.21.0: rows on the left, oscilloscope to the right of them filling the
    remaining width. Underneath, RAG | faction at 50/50. Both bottom charts
    share the same viewBox aspect (420x180) so they render at the same height
-   when their containers are equal width, and they scale together as the
-   panel resizes (SVG width="100%" + viewBox does the work). */
+   when their containers are equal width.
+   v70.22.0: chart containers use CSS 'aspect-ratio' so their heights track
+   their widths precisely, and their inner SVGs explicitly fill 100% of the
+   container — this is what makes the charts and oscilloscope scale fluidly
+   with the panel as the user drags the resize handle. */
 .diag-rows-osc { display: flex; gap: 12px; padding: 6px 8px; align-items: stretch; }
 .diag-systems { flex: 0 0 auto; min-width: 0; overflow-x: auto; }
 .diag-osc { flex: 1 1 0; min-width: 100px; align-self: stretch; }
-.diag-charts-row { display: flex; gap: 8px; padding: 0 8px 8px; align-items: stretch; }
-.diag-chart-rag { flex: 1 1 0; min-width: 0; }
-.diag-chart-faction { flex: 1 1 0; min-width: 0; }
+.diag-osc svg { width: 100%; height: 100%; display: block; }
+.diag-charts-row { display: flex; gap: 8px; padding: 0 8px 8px; align-items: flex-start; }
+.diag-chart-rag { flex: 1 1 0; min-width: 0; aspect-ratio: 420 / 180; }
+.diag-chart-faction { flex: 1 1 0; min-width: 0; aspect-ratio: 420 / 180; }
+.diag-chart-rag svg, .diag-chart-faction svg { width: 100%; height: 100%; display: block; }
 /* v70.17.0: each column auto-sizes to its longest content so no message
    gets truncated. column-gap supplies the 3-character spacing requirement. */
 /* v70.19.0: column widths driven by CSS variables set on the parent
