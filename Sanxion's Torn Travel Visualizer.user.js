@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.12.0
+// @version      70.13.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -545,7 +545,10 @@ ${dots}
   <polygon points="0,2.5 -1.5,4 -1,4.5 0,3.25 1,4.5 1.5,4" fill="white" stroke="black" stroke-width="0.6"/>
   <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="black" stroke-width="1.2" stroke-linecap="round"/>`;
     }
-    const rotAngle = (plane === 'prop_plane') ? (ang + 90 + 180) : (ang + 90);
+    // v70.13.0: removed the stray +180 that prop_plane previously had — the
+    // shape is drawn nose-up like the other planes, so `ang + 90` aligns it
+    // with the direction of travel for every aircraft type.
+    const rotAngle = ang + 90;
     g.innerHTML = `<g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${rotAngle.toFixed(1)}) scale(${scale})">
   <g filter="url(#gl)">${svgShape}
   </g>
@@ -1004,7 +1007,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.12.0</p>
+    <p class="ver-t">Version 70.13.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1350,7 +1353,8 @@ ${dots}
   <polygon points="0,2.5 -1.5,4 -1,4.5 0,3.25 1,4.5 1.5,4" fill="white" stroke="black" stroke-width="0.6"/>
   <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="black" stroke-width="1.2" stroke-linecap="round"/>`;
       }
-      const fAng = (plane === 'prop_plane') ? (ang + 180) : ang;
+      // v70.13.0: aligned prop_plane with the other types — no +180 flip needed.
+      const fAng = ang;
       // FIX 2 (v70.2.0): Alternate name above/below plane.
       const lblY = (grpIdx % 2 === 0) ? (pos.y - 6) : (pos.y + 11);
       html += `<polyline points="${pts.join(' ')}" fill="none" stroke="#888" stroke-width="${sw}" stroke-dasharray="10,6" opacity="0.45"/>
@@ -1654,6 +1658,33 @@ ${dots}
   ];
 
   let radarMode = 0;
+  let scanTimer = null;
+
+  // v70.13.0: Schedules the CRT scan line to sweep at random intervals between
+  // 20s and 2min, rather than running on a fixed 2.3s loop. Toggling the
+  // `.scan-active` class on the panel triggers a one-shot CSS animation; we
+  // remove the class once the animation has completed (~3s) and queue the next
+  // appearance after another random delay.
+  function startScanScheduler() {
+    stopScanScheduler();
+    const runOnce = () => {
+      if (!el.panel) return;
+      el.panel.classList.add('scan-active');
+      scanTimer = setTimeout(() => {
+        if (el.panel) el.panel.classList.remove('scan-active');
+        scheduleNext();
+      }, 3000);
+    };
+    const scheduleNext = () => {
+      const delay = 20000 + Math.random() * 100000;
+      scanTimer = setTimeout(runOnce, delay);
+    };
+    scheduleNext();
+  }
+  function stopScanScheduler() {
+    if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+    if (el.panel) el.panel.classList.remove('scan-active');
+  }
 
   function applyRadarMode(panel) {
     const mode = RADAR_MODES[radarMode];
@@ -1662,6 +1693,7 @@ ${dots}
       panel.classList.remove('radar-mode', 'radar-glitch');
       ['--rc','--rc-mid','--rc-dark','--rc-line','--rc-glow','--rc-filter'].forEach(v => panel.style.removeProperty(v));
       if (btn) { btn.classList.remove('ta'); btn.title = 'Overlay'; }
+      stopScanScheduler();
     } else {
       panel.classList.add('radar-mode');
       panel.classList.toggle('radar-glitch', !!mode.glitch);
@@ -1677,6 +1709,8 @@ ${dots}
         panel.style.setProperty('--rc-filter', `sepia(1) saturate(4) hue-rotate(${mode.hue}deg) brightness(0.85)`);
       }
       if (btn) { btn.classList.add('ta'); btn.title = `Overlay (${mode.display})`; }
+      if (mode.glitch) startScanScheduler();
+      else stopScanScheduler();
     }
     try { GM_setValue('tcfv_radar', radarMode); } catch(e) {}
   }
@@ -2331,8 +2365,8 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
 }
 @keyframes tcfv-glitch-scanline {
   0%   { top: -4px; opacity: 0; }
-  8%   { opacity: 0.9; }
-  100% { top: 100%; opacity: 0.4; }
+  10%  { opacity: 0.35; }
+  100% { top: 100%; opacity: 0.08; }
 }
 #tcfv.radar-glitch #tcfv-svg {
   animation: tcfv-glitch-jitter 3.7s infinite steps(1);
@@ -2343,19 +2377,26 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
 #tcfv.radar-glitch #tcfv-mapbox {
   position: relative;
 }
+/* v70.13.0: scan line is less visible (thinner line, smaller glow, lower
+   opacity) and triggered by the .scan-active class rather than running
+   continuously. A JS scheduler toggles .scan-active at random 20s–2min
+   intervals so the sweep feels occasional rather than constant. */
 #tcfv.radar-glitch #tcfv-mapbox::before {
   content: '';
   position: absolute;
   left: 0;
   right: 0;
-  height: 3px;
+  height: 2px;
   background: linear-gradient(180deg, transparent, var(--rc), transparent);
-  box-shadow: 0 0 14px var(--rc);
-  animation: tcfv-glitch-scanline 2.3s linear infinite;
+  box-shadow: 0 0 6px var(--rc);
   pointer-events: none;
   z-index: 5;
-  opacity: 0.7;
+  opacity: 0;
+  top: -10px;
   mix-blend-mode: screen;
+}
+#tcfv.radar-glitch.scan-active #tcfv-mapbox::before {
+  animation: tcfv-glitch-scanline 3s linear;
 }
 `);
   }
