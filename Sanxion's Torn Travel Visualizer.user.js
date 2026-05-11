@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.10.0
+// @version      70.12.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1004,7 +1004,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.10.0</p>
+    <p class="ver-t">Version 70.12.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1022,7 +1022,11 @@ ${dots}
         <label for="tcfv-scale-slider">Plane Size</label>
         <span id="tcfv-scale-val">100%</span>
       </div>
-      <input id="tcfv-scale-slider" type="range" min="10" max="300" value="100" step="5">
+      <input id="tcfv-scale-slider" type="range" min="10" max="1000" value="100" step="5">
+      <div class="scale-ends">
+        <span>small</span>
+        <span>large</span>
+      </div>
       <div id="tcfv-plane-preview-wrap">
         <svg id="tcfv-plane-preview" viewBox="-20 -20 40 40" xmlns="http://www.w3.org/2000/svg" width="80" height="80">
           <rect width="40" height="40" x="-20" y="-20" fill="#06101c" rx="4"/>
@@ -2250,6 +2254,15 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
 .scale-row label { color: #4a7a9a; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
 #tcfv-scale-val { color: #6abcee; font-size: 13px; font-weight: bold; }
 #tcfv-scale-slider { width: 100%; accent-color: #4488ff; cursor: pointer; margin-bottom: 14px; }
+.scale-ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: #4a7a9a;
+  letter-spacing: 1px;
+  margin-top: -10px;
+  margin-bottom: 12px;
+}
 #tcfv-plane-preview-wrap { display: flex; flex-direction: column; align-items: center; margin-top: 6px; }
 #tcfv-plane-preview { border: 1px solid #1e3d5c; border-radius: 6px; }
 #tcfv.radar-mode #tcfv-more h3 { color: var(--rc) !important; border-bottom-color: var(--rc-line) !important; }
@@ -2258,6 +2271,7 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
 #tcfv.radar-mode #tcfv-scale-slider { accent-color: var(--rc); }
 #tcfv.radar-mode #tcfv-plane-preview { border-color: var(--rc-line); background: var(--rc-dark); }
 #tcfv.radar-mode .scale-row label { color: var(--rc-mid); }
+#tcfv.radar-mode .scale-ends span { color: var(--rc-mid); }
 #tcfv.radar-mode {
   background: var(--rc-dark);
   border-color: var(--rc);
