@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.14.0
+// @version      70.15.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1007,7 +1007,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.14.0</p>
+    <p class="ver-t">Version 70.15.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1129,7 +1129,16 @@ ${dots}
     el.pgCred.style.display = pg === 'cred' ? 'block' : 'none';
     el.pgMore.style.display = pg === 'more' ? 'block' : 'none';
     el.pgDiag.style.display = pg === 'diag' ? 'flex' : 'none';
-    if (pg === 'diag') renderDiagPage();
+    // v70.15.0: regenerate diagnostics on each visit so every system rolls
+    // fresh status/detail; then start the periodic randomiser so indicators
+    // continue to change while the page is open.
+    if (pg === 'diag') {
+      S.diagnostics = generateDiagnostics();
+      renderDiagPage();
+      startDiagRandomiser();
+    } else {
+      stopDiagRandomiser();
+    }
     document.querySelectorAll('.thb').forEach(b => b.classList.remove('ta'));
     const map = { main:'#thb-main', set:'#thb-set', cred:'#thb-cred', more:'#thb-more', diag:'#thb-diag' };
     document.querySelector(map[pg])?.classList.add('ta');
@@ -1295,35 +1304,74 @@ ${dots}
 </svg>`;
   }
 
+  // v70.15.0: periodic re-randomisation of every system's status & detail
+  // (gear keeps its phase-driven position prefix). Runs while the user is on
+  // the diagnostics page so indicators feel dynamic, paused otherwise.
+  let diagRandomTimer = null;
+
+  function randomiseDiagnostics() {
+    if (!S.diagnostics) return;
+    const rnd = () => {
+      const r = Math.random();
+      if (r < 0.72) return 'green';
+      if (r < 0.92) return 'yellow';
+      return 'red';
+    };
+    const pickDetail = (sys, status) => {
+      const arr = sys.detailsByStatus && sys.detailsByStatus[status];
+      if (!arr || !arr.length) return '';
+      return arr[Math.floor(Math.random() * arr.length)];
+    };
+    S.diagnostics.systems.forEach(s => {
+      s.status = rnd();
+      s.detail = pickDetail(s, s.status);
+    });
+  }
+
+  function startDiagRandomiser() {
+    stopDiagRandomiser();
+    diagRandomTimer = setInterval(() => {
+      if (S.page !== 'diag') return;
+      randomiseDiagnostics();
+      renderDiagPage();
+    }, 10000);
+  }
+
+  function stopDiagRandomiser() {
+    if (diagRandomTimer) { clearInterval(diagRandomTimer); diagRandomTimer = null; }
+  }
+
   function renderDiagPage() {
     const inner = document.getElementById('tcfv-diag-inner');
     if (!inner) return;
     if (!S.diagnostics) S.diagnostics = generateDiagnostics();
     const d = S.diagnostics;
+    // v70.15.0: compute the gear's display detail without mutating
+    // gearSys.detail — the old approach prefixed the position text onto the
+    // stored detail, so repeated renders compounded into
+    // "Gear retracted — Gear retracted — …". The raw issue stays in
+    // gearSys.detail; the display version is built fresh each render.
     const gearSys = d.systems.find(s => s.id === 'gear');
+    let gearDisplayDetail = null;
     if (gearSys) {
-      // v70.14.0: position (deployed/retracted) is prepended to whatever
-      // status-derived detail was picked, rather than clobbering it. When the
-      // plane is on the ground or close to landing, the gear is always green
-      // and down; in flight, the random status still applies but the position
-      // text reads "retracted".
       const phase = S.flying ? (S.arrTime && (S.arrTime - Date.now() < 120000) ? 'landing' : 'flying') : 'ground';
       const isDown = (phase === 'ground' || phase === 'landing');
       const position = isDown ? 'Gear deployed' : 'Gear retracted';
       if (isDown) gearSys.status = 'green';
       const issue = gearSys.detail || '';
       const isGenericGreen = /^(Gear status normal|Down & locked indication clear|Hydraulics nominal|All three down & locked|Tyre pressure OK)$/.test(issue);
-      gearSys.detail = (gearSys.status === 'green' || isGenericGreen) ? position : `${position} — ${issue}`;
+      gearDisplayDetail = (gearSys.status === 'green' || isGenericGreen) ? position : `${position} — ${issue}`;
     }
     const schematic = d.isSmall ? diagSVGSmall(d.systems) : diagSVGLarge(d.systems);
     const acType = d.isSmall ? 'PRIVATE PLANE' : 'JUMBO JET';
     const rows = d.systems.map(s => {
       const col = DIAG_STATUS_COLS[s.status];
       const label = s.status.toUpperCase();
+      const detail = (s.id === 'gear' && gearDisplayDetail !== null) ? gearDisplayDetail : s.detail;
       return `<div class="diag-row">
   <span class="diag-ind" style="background:${col}"></span>
   <span class="diag-name">${s.name}</span>
-  <span class="diag-detail">${s.detail}</span>
+  <span class="diag-detail">${detail}</span>
   <span class="diag-status" style="color:${col}">${label}</span>
 </div>`;
     }).join('');
