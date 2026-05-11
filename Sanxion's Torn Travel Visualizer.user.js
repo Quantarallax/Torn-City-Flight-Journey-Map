@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.13.0
+// @version      70.14.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1007,7 +1007,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.13.0</p>
+    <p class="ver-t">Version 70.14.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1084,6 +1084,9 @@ ${dots}
       S.apiKey = apiInp.value.trim(); saveS();
       const m = panel.querySelector('#tcfv-api-msg');
       m.textContent = 'Key saved successfully.'; m.style.color = '#44ff88';
+      // v70.14.0: start background faction polling so takeoff notifications
+      // work as soon as a key is set, without needing to enter faction view.
+      if (S.apiKey) startBackgroundFactionPolling();
     });
     panel.querySelector('#tcfv-api-test').addEventListener('click', () =>
       testApiKey(apiInp.value.trim(), panel.querySelector('#tcfv-api-msg'))
@@ -1139,6 +1142,10 @@ ${dots}
 
   const DIAG_STATUS_COLS = { green:'#44ff88', yellow:'#ffcc44', red:'#ff4444' };
 
+  // v70.14.0: each system carries a detailsByStatus pool so the displayed
+  // message matches the rolled status. Messages reflect realistic aviation
+  // issues (avionics faults, pressurisation problems, engine indications,
+  // hydraulic/control-surface degradations, gear safety, stabiliser anomalies).
   function generateDiagnostics() {
     const isSmall = TICKETS[S.ticket]?.size === 'small';
     const rnd = () => {
@@ -1147,22 +1154,86 @@ ${dots}
       if (r < 0.92) return 'yellow';
       return 'red';
     };
+    const pickDetail = (sys, status) => {
+      const arr = sys.detailsByStatus && sys.detailsByStatus[status];
+      if (!arr || !arr.length) return '';
+      return arr[Math.floor(Math.random() * arr.length)];
+    };
     const largeSystems = [
-      { id:'electrical', name:'Electrical Systems', detail:'All buses nominal', x:140, y:52 },
-      { id:'pressure', name:'Cabin Pressure', detail:'8.0 psi differential', x:140, y:80 },
-      { id:'engines', name:'Engines (x4)', detail:'CFM56-7B thrust nominal', x:38, y:118 },
-      { id:'wings', name:'Wings', detail:'Control surfaces nominal', x:252, y:108 },
-      { id:'gear', name:'Flight Gear', detail:'Gear deployed', x:140, y:143 },
-      { id:'tail', name:'Tail Wing', detail:'Stabilisers nominal', x:140, y:178 },
+      { id:'electrical', name:'Electrical Systems', x:140, y:52,
+        detailsByStatus: {
+          green:  ['All buses nominal', 'Power distribution OK', 'IDG output stable'],
+          yellow: ['Voltage flicker on bus 2', 'Battery charge irregular', 'IDG output marginal'],
+          red:    ['Generator 1 offline', 'Avionics smoke detected', 'Total electrical fault'],
+        } },
+      { id:'pressure', name:'Cabin Pressure', x:140, y:80,
+        detailsByStatus: {
+          green:  ['8.0 psi differential', 'Pressurisation nominal', 'Outflow valve stable'],
+          yellow: ['Outflow valve sluggish', 'Minor seal leak detected', 'Cabin altitude drifting'],
+          red:    ['Rapid decompression risk', 'Oxygen masks armed', 'Cabin altitude critical'],
+        } },
+      { id:'engines', name:'Engines (x4)', x:38, y:118,
+        detailsByStatus: {
+          green:  ['CFM56-7B thrust nominal', 'All four engines stable', 'N1/N2 within tolerance'],
+          yellow: ['EGT high on #3', 'Oil pressure marginal #2', 'Vibration warning #4'],
+          red:    ['Engine #2 flame-out', 'Compressor stall #1', 'Critical overheat #3'],
+        } },
+      { id:'wings', name:'Wings', x:252, y:108,
+        detailsByStatus: {
+          green:  ['Control surfaces nominal', 'Aileron & flap response OK', 'Hydraulics green'],
+          yellow: ['Flap actuator slow', 'Slat asymmetry detected', 'Hydraulic pressure low'],
+          red:    ['Aileron jam', 'Leading edge damage', 'Spoiler split detected'],
+        } },
+      { id:'gear', name:'Flight Gear', x:140, y:143,
+        detailsByStatus: {
+          green:  ['Gear status normal', 'Hydraulics nominal', 'All three down & locked'],
+          yellow: ['Hydraulic seal weak', 'Position indicator intermittent', 'Tyre pressure marginal'],
+          red:    ['Gear unsafe — manual extension required', 'Tyre pressure critical', 'Strut leak detected'],
+        } },
+      { id:'tail', name:'Tail Wing', x:140, y:178,
+        detailsByStatus: {
+          green:  ['Stabilisers nominal', 'Rudder & elevator OK', 'Trim within range'],
+          yellow: ['Rudder limiter active', 'Elevator trim drift', 'Yaw damper intermittent'],
+          red:    ['Rudder jam', 'Elevator authority lost', 'Stabiliser runaway'],
+        } },
     ];
     const smallSystems = [
-      { id:'electrical', name:'Electrical Systems', detail:'Battery & alternator OK', x:140, y:68 },
-      { id:'engine', name:'Engine', detail:'Lycoming O-360 nominal', x:140, y:22 },
-      { id:'wings', name:'Wings', detail:'Control surfaces nominal', x:28, y:96 },
-      { id:'gear', name:'Flight Gear', detail:'Gear deployed', x:140, y:128 },
-      { id:'tail', name:'Tail Wing', detail:'Stabiliser nominal', x:140, y:162 },
+      { id:'electrical', name:'Electrical Systems', x:140, y:68,
+        detailsByStatus: {
+          green:  ['Battery & alternator OK', 'Bus voltage stable', 'Avionics powered'],
+          yellow: ['Alternator output low', 'Battery temperature high', 'Ammeter fluctuating'],
+          red:    ['Alternator offline', 'Battery dead', 'Master switch tripped'],
+        } },
+      { id:'engine', name:'Engine', x:140, y:22,
+        detailsByStatus: {
+          green:  ['Lycoming O-360 nominal', 'CHT/EGT in range', 'Oil pressure stable'],
+          yellow: ['CHT marginal cyl 3', 'Oil pressure low', 'Mag drop above limit'],
+          red:    ['Engine rough running', 'Oil pressure critical', 'Fuel starvation detected'],
+        } },
+      { id:'wings', name:'Wings', x:28, y:96,
+        detailsByStatus: {
+          green:  ['Control surfaces nominal', 'Aileron response OK', 'Flap operation normal'],
+          yellow: ['Flap actuator drag', 'Aileron friction high', 'Trim cable stretched'],
+          red:    ['Aileron stuck', 'Flap asymmetric extension', 'Wing strut damage'],
+        } },
+      { id:'gear', name:'Flight Gear', x:140, y:128,
+        detailsByStatus: {
+          green:  ['Gear status normal', 'Down & locked indication clear', 'Tyre pressure OK'],
+          yellow: ['Wheel bearing rough', 'Brake pad wear high', 'Tyre pressure marginal'],
+          red:    ['Brake hydraulic leak', 'Tyre pressure critical', 'Gear strut bent'],
+        } },
+      { id:'tail', name:'Tail Wing', x:140, y:162,
+        detailsByStatus: {
+          green:  ['Stabiliser nominal', 'Rudder & elevator OK', 'Trim wheel free'],
+          yellow: ['Trim wheel stiff', 'Rudder pedal asymmetry', 'Elevator vibration'],
+          red:    ['Elevator jam', 'Rudder cable broken', 'Trim runaway'],
+        } },
     ];
-    const systems = (isSmall ? smallSystems : largeSystems).map(s => ({ ...s, status: rnd() }));
+    const list = isSmall ? smallSystems : largeSystems;
+    const systems = list.map(s => {
+      const status = rnd();
+      return { ...s, status, detail: pickDetail(s, status) };
+    });
     return { isSmall, systems };
   }
 
@@ -1231,13 +1302,18 @@ ${dots}
     const d = S.diagnostics;
     const gearSys = d.systems.find(s => s.id === 'gear');
     if (gearSys) {
+      // v70.14.0: position (deployed/retracted) is prepended to whatever
+      // status-derived detail was picked, rather than clobbering it. When the
+      // plane is on the ground or close to landing, the gear is always green
+      // and down; in flight, the random status still applies but the position
+      // text reads "retracted".
       const phase = S.flying ? (S.arrTime && (S.arrTime - Date.now() < 120000) ? 'landing' : 'flying') : 'ground';
-      if (phase === 'ground' || phase === 'landing') {
-        gearSys.status = 'green';
-        gearSys.detail = 'Gear deployed';
-      } else {
-        gearSys.detail = 'Gear retracted';
-      }
+      const isDown = (phase === 'ground' || phase === 'landing');
+      const position = isDown ? 'Gear deployed' : 'Gear retracted';
+      if (isDown) gearSys.status = 'green';
+      const issue = gearSys.detail || '';
+      const isGenericGreen = /^(Gear status normal|Down & locked indication clear|Hydraulics nominal|All three down & locked|Tyre pressure OK)$/.test(issue);
+      gearSys.detail = (gearSys.status === 'green' || isGenericGreen) ? position : `${position} — ${issue}`;
     }
     const schematic = d.isSmall ? diagSVGSmall(d.systems) : diagSVGLarge(d.systems);
     const acType = d.isSmall ? 'PRIVATE PLANE' : 'JUMBO JET';
@@ -1264,11 +1340,50 @@ ${dots}
   ───────────────────────────────────────────────────────────── */
 
   let factionFlightsOn = false;
-  let factionPollTimer = null;
   let factionDrawTimer = null;
   let factionData = {};
   let factionAbroad = {};
   let savedPlayerViewBox = '';
+  // v70.14.0: track previously-known flying faction members so we can fire
+  // a takeoff notification when a new entry appears between polls.
+  let prevFactionFlyingIds = new Set();
+  let factionFirstPollDone = false;
+  let backgroundFactionTimer = null;
+  let activeNotifyCount = 0;
+
+  /**
+   * v70.14.0: Show a small popup at the bottom-right of the map view when a
+   * faction member takes off. Stays for 4s of dwell, then slides off the
+   * bottom (~5s total animation). Multiple notifications stack vertically.
+   */
+  function notifyFactionTakeoff(name, srcCity, dstCity) {
+    const mapbox = document.getElementById('tcfv-mapbox');
+    if (!mapbox) return;
+    const note = document.createElement('div');
+    note.className = 'tcfv-notify';
+    note.style.bottom = `${12 + activeNotifyCount * 52}px`;
+    const icon = document.createElement('span');
+    icon.className = 'tcfv-notify-icon';
+    icon.textContent = '\u2708';
+    note.appendChild(icon);
+    note.appendChild(document.createTextNode(` ${name} has taken off from ${srcCity} headed for ${dstCity}`));
+    mapbox.appendChild(note);
+    activeNotifyCount++;
+    setTimeout(() => {
+      if (note.parentNode) note.parentNode.removeChild(note);
+      activeNotifyCount = Math.max(0, activeNotifyCount - 1);
+    }, 5000);
+  }
+
+  function startBackgroundFactionPolling() {
+    if (!S.apiKey || backgroundFactionTimer) return;
+    backgroundFactionTimer = setInterval(fetchFactionFlights, 60000);
+    fetchFactionFlights();
+  }
+
+  function stopBackgroundFactionPolling() {
+    if (backgroundFactionTimer) { clearInterval(backgroundFactionTimer); backgroundFactionTimer = null; }
+  }
 
   function matchFactionTicket(method) {
     if (!method) return 'standard';
@@ -1451,7 +1566,11 @@ ${dots}
   }
 
   function fetchFactionFlights() {
-    if (!S.apiKey || !factionFlightsOn) return;
+    // v70.14.0: runs whenever an API key is set (no longer gated on faction
+    // view). The visual updates (drawFactionFlights / zoom / roster) are still
+    // skipped when the user is in Flight View — but the data is collected so
+    // takeoff notifications can fire.
+    if (!S.apiKey) return;
     GM_xmlhttpRequest({
       method: 'GET',
       url: `https://api.torn.com/v2/faction?selections=members&key=${S.apiKey}`,
@@ -1528,9 +1647,32 @@ ${dots}
               };
             }
           }
-          drawFactionFlights();
-          zoomToFitFaction();
-          renderFactionRoster();
+          // v70.14.0: detect new takeoffs (members flying now who weren't
+          // flying on the previous poll). Skip the first ever poll so we
+          // don't notify for members who were already in the air on load.
+          const currentFlyingIds = new Set(
+            Object.keys(factionData).filter(id => id !== 'self_player')
+          );
+          if (factionFirstPollDone) {
+            for (const id of currentFlyingIds) {
+              if (!prevFactionFlyingIds.has(id)) {
+                const m = factionData[id];
+                if (m && m.src && m.dst) {
+                  const srcCity = DESTS[m.src]?.city || m.src;
+                  const dstCity = DESTS[m.dst]?.city || m.dst;
+                  notifyFactionTakeoff(m.name, srcCity, dstCity);
+                }
+              }
+            }
+          }
+          prevFactionFlyingIds = currentFlyingIds;
+          factionFirstPollDone = true;
+          // Only redraw the faction map/zoom/roster when faction view is on.
+          if (factionFlightsOn) {
+            drawFactionFlights();
+            zoomToFitFaction();
+            renderFactionRoster();
+          }
         } catch(e) {
           if (el.log && factionFlightsOn) {
             el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction parse error — check api key</div>';
@@ -1617,16 +1759,17 @@ ${dots}
       if (planeg) planeg.style.display = 'none';
       highlightDots(null, null);
       stopDashAnim();
+      // v70.14.0: background poller is already running (started by API-save
+      // or init), so we only need to trigger an immediate refresh and start
+      // the draw timer here. Drop the redundant 60s pollTimer.
       fetchFactionFlights();
-      factionPollTimer = setInterval(fetchFactionFlights, 60000);
       factionDrawTimer = setInterval(() => { drawFactionFlights(); zoomToFitFaction(); renderFactionRoster(); }, 5000);
     } else {
       btn?.classList.remove('ta');
-      clearInterval(factionPollTimer);
       clearInterval(factionDrawTimer);
-      factionPollTimer = null;
       factionDrawTimer = null;
-      factionData = {};
+      // v70.14.0: keep factionData populated so the background poller can
+      // still detect new takeoffs while the user is in Flight View.
       const fg = document.getElementById('tcfv-factiong');
       if (fg) fg.innerHTML = '';
       if (el.svg && savedPlayerViewBox) {
@@ -2261,6 +2404,46 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
   opacity: 0.7;
 }
 #tcfv-resize-handle:hover { opacity: 1; }
+/* v70.14.0: faction takeoff notification — square popup at bottom-right of
+   the map area. 5s total: slide in (~0.2s), hold (4s per spec), slide off
+   (~0.8s) by translating the box down past the bottom edge. */
+.tcfv-notify {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  min-width: 180px;
+  max-width: 240px;
+  padding: 8px 10px;
+  background: rgba(15, 30, 48, 0.92);
+  border: 1px solid #4488ff;
+  border-radius: 4px;
+  color: #b8d4ee;
+  font-size: 10px;
+  font-family: 'Courier New', monospace;
+  line-height: 1.4;
+  z-index: 50;
+  box-shadow: 0 4px 12px rgba(0, 80, 160, 0.4);
+  animation: tcfv-notify-show 5s ease-in-out forwards;
+  pointer-events: none;
+}
+.tcfv-notify-icon {
+  color: #88ff44;
+  margin-right: 4px;
+  font-weight: bold;
+}
+@keyframes tcfv-notify-show {
+  0%   { transform: translateY(140%); opacity: 0; }
+  4%   { transform: translateY(0); opacity: 1; }
+  84%  { transform: translateY(0); opacity: 1; }
+  100% { transform: translateY(140%); opacity: 0; }
+}
+#tcfv.radar-mode .tcfv-notify {
+  background: var(--rc-dark);
+  border-color: var(--rc);
+  color: var(--rc);
+  box-shadow: 0 4px 12px var(--rc-glow);
+}
+#tcfv.radar-mode .tcfv-notify-icon { color: var(--rc); }
 #tcfv-diag { flex-direction: column; height: 100%; overflow-y: auto; background: #050e05; }
 #tcfv-diag-inner { padding: 0; flex: 1; }
 .diag-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px 4px; border-bottom: 1px solid #1a3520; }
@@ -2457,6 +2640,8 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
     showPg(S.page || 'main');
     startLoop();
     initFromApi();
+    // v70.14.0: background faction polling for takeoff notifications.
+    if (S.apiKey) startBackgroundFactionPolling();
   }
 
   function fastRestore() {
