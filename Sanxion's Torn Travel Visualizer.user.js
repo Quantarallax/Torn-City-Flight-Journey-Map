@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.15.0
+// @version      70.16.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -205,7 +205,7 @@
     ticket:'standard', player:'Pilot', flying:false, isReturn:false,
     prevPhase:'', phasesTriggered:{}, turbTriggered:false, halfwayFired:false,
     log:[], px:20, py:60, pw:680, ph_panel:520, min:false, page:'main', apiKey:'',
-    previewDst:null, inflightSchedule:null, planeScale:100, inflightLogStart:null, diagnostics:null, airportClosed:false, inHospital:false, terrorThreat:false, stateOfEmergency:false,
+    previewDst:null, inflightSchedule:null, planeScale:100, inflightLogStart:null, diagnostics:null, airportClosed:false, inHospital:false, terrorThreat:false, stateOfEmergency:false, flightHistory:{ samples:[] },
   };
 
   const saveS = () => {
@@ -215,7 +215,7 @@
         ticket:S.ticket, player:S.player, flying:S.flying, isReturn:S.isReturn,
         prevPhase:S.prevPhase, phasesTriggered:S.phasesTriggered, turbTriggered:S.turbTriggered, halfwayFired:S.halfwayFired,
         log:S.log.slice(-30), px:S.px, py:S.py, pw:S.pw, ph_panel:S.ph_panel,
-        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale, inflightLogStart:S.inflightLogStart, diagnostics:S.diagnostics, airportClosed:S.airportClosed, inHospital:S.inHospital, terrorThreat:S.terrorThreat, stateOfEmergency:S.stateOfEmergency,
+        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale, inflightLogStart:S.inflightLogStart, diagnostics:S.diagnostics, airportClosed:S.airportClosed, inHospital:S.inHospital, terrorThreat:S.terrorThreat, stateOfEmergency:S.stateOfEmergency, flightHistory:S.flightHistory,
       }));
     } catch(e) {}
   };
@@ -229,6 +229,7 @@
       if (S.halfwayFired === undefined) S.halfwayFired = false;
       if (!S.planeScale) S.planeScale = 100;
       if (S.inflightLogStart === undefined) S.inflightLogStart = null;
+      if (!S.flightHistory || !Array.isArray(S.flightHistory.samples)) S.flightHistory = { samples: [] };
     } catch(e) {}
   };
 
@@ -861,6 +862,10 @@ ${dots}
             if (msg) addLog(msg);
             if (i === arrivedFns.length - 1) {
               const newSrc = S.dst;
+              // v70.16.0: capture a final sample at landing so the chart
+              // closes at t=1, then stop the per-flight sampler.
+              recordFlightSample();
+              stopFlightSampling();
               S.flying = false;
               S.src = newSrc;
               S.dst = null;
@@ -1007,7 +1012,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.15.0</p>
+    <p class="ver-t">Version 70.16.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1304,10 +1309,14 @@ ${dots}
 </svg>`;
   }
 
-  // v70.15.0: periodic re-randomisation of every system's status & detail
+  // v70.16.0: periodic re-randomisation of every system's status & detail
   // (gear keeps its phase-driven position prefix). Runs while the user is on
   // the diagnostics page so indicators feel dynamic, paused otherwise.
   let diagRandomTimer = null;
+  // v70.16.0: per-flight sampler. Runs throughout an active flight (regardless
+  // of which page the user is viewing) so the RAG-history chart on the
+  // Diagnostics page reflects the full flight duration from takeoff to landing.
+  let flightSampleTimer = null;
 
   function randomiseDiagnostics() {
     if (!S.diagnostics) return;
@@ -1328,6 +1337,45 @@ ${dots}
     });
   }
 
+  function recordFlightSample() {
+    if (!S.flying || !S.diagnostics) return;
+    if (!S.flightHistory || !Array.isArray(S.flightHistory.samples)) {
+      S.flightHistory = { samples: [] };
+    }
+    const counts = { green:0, yellow:0, red:0 };
+    S.diagnostics.systems.forEach(s => { if (counts[s.status] !== undefined) counts[s.status]++; });
+    const now = Date.now();
+    const total = (S.arrTime || 0) - (S.depTime || 0);
+    const elapsed = now - (S.depTime || now);
+    const progress = total > 0 ? Math.min(1, Math.max(0, elapsed / total)) : 0;
+    const timeLeft = Math.max(0, (S.arrTime || 0) - now);
+    const alt = getAlt(progress, timeLeft);
+    S.flightHistory.samples.push({ t: progress, g: counts.green, y: counts.yellow, r: counts.red, a: alt });
+    // Hard cap to keep storage manageable for very long flights — keep the
+    // first sample plus an evenly-spaced subset when capacity is reached.
+    if (S.flightHistory.samples.length > 600) {
+      const ss = S.flightHistory.samples;
+      const compacted = [ss[0]];
+      for (let i = 2; i < ss.length; i += 2) compacted.push(ss[i]);
+      S.flightHistory.samples = compacted;
+    }
+  }
+
+  function startFlightSampling() {
+    stopFlightSampling();
+    flightSampleTimer = setInterval(() => {
+      if (!S.flying) { stopFlightSampling(); return; }
+      randomiseDiagnostics();
+      recordFlightSample();
+      saveS();
+      if (S.page === 'diag') renderDiagPage();
+    }, 30000);
+  }
+
+  function stopFlightSampling() {
+    if (flightSampleTimer) { clearInterval(flightSampleTimer); flightSampleTimer = null; }
+  }
+
   function startDiagRandomiser() {
     stopDiagRandomiser();
     diagRandomTimer = setInterval(() => {
@@ -1341,16 +1389,80 @@ ${dots}
     if (diagRandomTimer) { clearInterval(diagRandomTimer); diagRandomTimer = null; }
   }
 
+  // v70.16.0: curved line chart of RAG counts + altitude across the active
+  // flight. X axis = flight progress (0→1). Left Y axis = system count
+  // (0→max). Right Y axis = altitude (0→ticket maxAlt). Curves smoothed with
+  // mid-point quadratic Bezier interpolation.
+  function renderFlightHistoryChart() {
+    const W = 280, H = 200;
+    const padL = 26, padR = 30, padT = 14, padB = 22;
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+    const samples = (S.flightHistory && S.flightHistory.samples) || [];
+    const maxCount = (S.diagnostics && S.diagnostics.systems) ? S.diagnostics.systems.length : 6;
+    const maxAlt = TICKETS[S.ticket]?.maxAlt || 32000;
+
+    const buildPath = (getValue, max) => {
+      if (!samples.length) return '';
+      const pts = samples.map(s => ({
+        x: padL + s.t * plotW,
+        y: padT + plotH - (getValue(s) / max) * plotH,
+      }));
+      if (pts.length === 1) return `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+      let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+      for (let i = 1; i < pts.length; i++) {
+        const prev = pts[i-1];
+        const cur = pts[i];
+        const mx = ((prev.x + cur.x) / 2).toFixed(1);
+        const my = ((prev.y + cur.y) / 2).toFixed(1);
+        d += ` Q ${prev.x.toFixed(1)} ${prev.y.toFixed(1)} ${mx} ${my}`;
+      }
+      const last = pts[pts.length - 1];
+      d += ` L ${last.x.toFixed(1)} ${last.y.toFixed(1)}`;
+      return d;
+    };
+
+    const greenPath  = buildPath(s => s.g, maxCount);
+    const yellowPath = buildPath(s => s.y, maxCount);
+    const redPath    = buildPath(s => s.r, maxCount);
+    const altPath    = buildPath(s => s.a, maxAlt);
+
+    const emptyMsg = samples.length === 0
+      ? `<text x="${W/2}" y="${H/2}" font-size="9" fill="#446" text-anchor="middle" font-family="monospace">NO FLIGHT DATA</text>`
+      : '';
+
+    return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-height:200px;display:block">
+  <rect width="${W}" height="${H}" fill="#050e05"/>
+  <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H - padB}" stroke="#2a4a2a" stroke-width="0.6"/>
+  <line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}" stroke="#2a4a2a" stroke-width="0.6"/>
+  <line x1="${W - padR}" y1="${padT}" x2="${W - padR}" y2="${H - padB}" stroke="#2a4a2a" stroke-width="0.6"/>
+  <text x="${padL - 3}" y="${padT + 4}" font-size="7" fill="#5a8a5a" text-anchor="end" font-family="monospace">${maxCount}</text>
+  <text x="${padL - 3}" y="${H - padB + 2}" font-size="7" fill="#5a8a5a" text-anchor="end" font-family="monospace">0</text>
+  <text x="${W - padR + 3}" y="${padT + 4}" font-size="7" fill="#5a8a5a" text-anchor="start" font-family="monospace">${(maxAlt/1000).toFixed(0)}K</text>
+  <text x="${W - padR + 3}" y="${H - padB + 2}" font-size="7" fill="#5a8a5a" text-anchor="start" font-family="monospace">0</text>
+  <text x="${(W/2).toFixed(0)}" y="${H - 6}" font-size="7" fill="#5a8a5a" text-anchor="middle" font-family="monospace">FLIGHT TIME</text>
+  <text x="${padL - 3}" y="${(padT + plotH/2 + 2).toFixed(0)}" font-size="6" fill="#5a8a5a" text-anchor="end" font-family="monospace" transform="rotate(-90 ${padL - 3} ${(padT + plotH/2 + 2).toFixed(0)})">COUNT</text>
+  <text x="${W - padR + 3}" y="${(padT + plotH/2 + 2).toFixed(0)}" font-size="6" fill="#5a8a5a" text-anchor="start" font-family="monospace" transform="rotate(-90 ${W - padR + 3} ${(padT + plotH/2 + 2).toFixed(0)})">ALT FT</text>
+  <path d="${altPath}" fill="none" stroke="#5ab0e8" stroke-width="1" stroke-dasharray="3,2" opacity="0.6"/>
+  <path d="${greenPath}" fill="none" stroke="#44ff88" stroke-width="1.2" opacity="0.9"/>
+  <path d="${yellowPath}" fill="none" stroke="#ffcc44" stroke-width="1.2" opacity="0.9"/>
+  <path d="${redPath}" fill="none" stroke="#ff4444" stroke-width="1.2" opacity="0.9"/>
+  <g transform="translate(${padL + 4}, ${padT + 2})" font-size="6" font-family="monospace">
+    <text x="0" y="6" fill="#44ff88">&#9472; GREEN</text>
+    <text x="0" y="14" fill="#ffcc44">&#9472; YELLOW</text>
+    <text x="0" y="22" fill="#ff4444">&#9472; RED</text>
+    <text x="0" y="30" fill="#5ab0e8">- - ALT</text>
+  </g>
+  ${emptyMsg}
+</svg>`;
+  }
+
   function renderDiagPage() {
     const inner = document.getElementById('tcfv-diag-inner');
     if (!inner) return;
     if (!S.diagnostics) S.diagnostics = generateDiagnostics();
     const d = S.diagnostics;
-    // v70.15.0: compute the gear's display detail without mutating
-    // gearSys.detail — the old approach prefixed the position text onto the
-    // stored detail, so repeated renders compounded into
-    // "Gear retracted — Gear retracted — …". The raw issue stays in
-    // gearSys.detail; the display version is built fresh each render.
+    // v70.15.0: gear display detail computed without mutating gearSys.detail.
     const gearSys = d.systems.find(s => s.id === 'gear');
     let gearDisplayDetail = null;
     if (gearSys) {
@@ -1364,23 +1476,32 @@ ${dots}
     }
     const schematic = d.isSmall ? diagSVGSmall(d.systems) : diagSVGLarge(d.systems);
     const acType = d.isSmall ? 'PRIVATE PLANE' : 'JUMBO JET';
+    // v70.16.0: all three columns uppercased; gaps widened to 3 character
+    // widths (~18px in the monospace stack) and the block is left-justified
+    // rather than spanning the full row.
     const rows = d.systems.map(s => {
       const col = DIAG_STATUS_COLS[s.status];
       const label = s.status.toUpperCase();
-      const detail = (s.id === 'gear' && gearDisplayDetail !== null) ? gearDisplayDetail : s.detail;
+      const detailRaw = (s.id === 'gear' && gearDisplayDetail !== null) ? gearDisplayDetail : s.detail;
+      const detail = (detailRaw || '').toUpperCase();
+      const name = (s.name || '').toUpperCase();
       return `<div class="diag-row">
   <span class="diag-ind" style="background:${col}"></span>
-  <span class="diag-name">${s.name}</span>
+  <span class="diag-name">${name}</span>
   <span class="diag-detail">${detail}</span>
   <span class="diag-status" style="color:${col}">${label}</span>
 </div>`;
     }).join('');
+    const chart = renderFlightHistoryChart();
     inner.innerHTML = `<div class="diag-header">
   <span class="diag-title">&#9874; AIRCRAFT DIAGNOSTICS</span>
   <span class="diag-type">${acType}</span>
 </div>
 <div class="diag-schematic">${schematic}</div>
-<div class="diag-systems">${rows}</div>`;
+<div class="diag-systems-wrap">
+  <div class="diag-systems">${rows}</div>
+  <div class="diag-chart">${chart}</div>
+</div>`;
   }
 
   /* ─────────────────────────────────────────────────────────────
@@ -2226,6 +2347,12 @@ ${dots}
     S.diagnostics = null;
     S.log = [];
     S.previewDst = null;
+    // v70.16.0: reset RAG history and kick off the flight sampler so the
+    // diagnostics chart fills from left to right across this flight.
+    S.flightHistory = { samples: [] };
+    S.diagnostics = generateDiagnostics();
+    recordFlightSample();
+    startFlightSampling();
     saveS();
     // v70.9.0: zoom first so drawPath uses the correct currentZoom for stroke widths.
     if (el.svg) {
@@ -2498,12 +2625,36 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
 .diag-title { font-size: 9px; color: #44ff88; letter-spacing: 2.5px; text-transform: uppercase; }
 .diag-type { font-size: 9px; color: #336633; letter-spacing: 1px; }
 .diag-schematic { padding: 6px 8px 2px; border-bottom: 1px solid #0a2010; }
-.diag-systems { padding: 6px 8px; }
-.diag-row { display: grid; grid-template-columns: 10px 1fr 1fr 56px; gap: 4px; align-items: center; padding: 3px 0; border-bottom: 1px dotted #0a1a0a; }
+/* v70.16.0: rows on the left, chart on the right. */
+.diag-systems-wrap { display: flex; gap: 12px; padding: 6px 8px; align-items: flex-start; }
+.diag-systems { flex: 0 0 auto; }
+.diag-chart { flex: 1 1 0; min-width: 180px; }
+/* v70.16.0: three-character (~18px) gap between columns, content sized to fit
+   so the block stays left-aligned. All three text columns uppercased. */
+.diag-row {
+  display: grid;
+  grid-template-columns: 10px 100px 180px 50px;
+  column-gap: 18px;
+  align-items: center;
+  padding: 3px 0;
+  border-bottom: 1px dotted #0a1a0a;
+}
 .diag-ind { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 5px currentColor; }
-.diag-name { font-size: 10px; color: #66bb66; }
-.diag-detail { font-size: 9px; color: #336633; }
-.diag-status { font-size: 9px; font-weight: bold; text-align: right; letter-spacing: 0.5px; }
+.diag-name {
+  font-size: 9px; color: #66bb66;
+  text-transform: uppercase;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.diag-detail {
+  font-size: 9px; color: #336633;
+  text-transform: uppercase;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.diag-status {
+  font-size: 9px; font-weight: bold; letter-spacing: 0.5px;
+  text-transform: uppercase;
+  text-align: left;
+}
 #tcfv.radar-mode #tcfv-diag { background: var(--rc-dark); }
 #tcfv.radar-mode .diag-header { border-bottom-color: var(--rc-line); }
 #tcfv.radar-mode .diag-title { color: var(--rc); }
@@ -2678,6 +2829,8 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
         if (el.svg) { const vb=getZoomedViewBox(S.src,S.dst); el.svg.setAttribute('viewBox',vb); currentZoom=MAP_W/parseFloat(vb.split(' ')[2]); }
         drawPath(S.src, S.dst);
         highlightDots(S.src, S.dst);
+        // v70.16.0: resume the per-flight sampler after a page reload.
+        startFlightSampling();
       }
     } else if (S.previewDst) {
       // v70.9.0: zoom first so drawPath uses the correct currentZoom.
