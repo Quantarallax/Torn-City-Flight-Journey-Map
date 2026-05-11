@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.19.0
+// @version      70.20.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1020,7 +1020,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.19.0</p>
+    <p class="ver-t">Version 70.20.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1597,20 +1597,21 @@ ${dots}
     const nameW = Math.ceil((d.maxNameLen || 0) * charPx) + 4;
     const detailW = Math.ceil((d.maxDetailLen || 0) * charPx) + 4;
     const statusW = 56;
-    // v70.18.0: faction chart sits to the right of the textual display
-    // (rows), with the RAG/altitude chart underneath spanning the full window
-    // width.
-    // v70.19.0: faction chart is fixed at half the panel width on the right.
+    // v70.20.0: rows take the full window width on top. Both charts live
+    // side-by-side in a row underneath, each at exactly half the window so
+    // RAG sits on the left and faction on the right per spec. SVGs use
+    // `width="100%"` with their viewBox, so they scale when the panel is
+    // resized.
     inner.innerHTML = `<div class="diag-header">
   <span class="diag-title">&#9874; AIRCRAFT DIAGNOSTICS</span>
   <span class="diag-type">${acType}</span>
 </div>
 <div class="diag-schematic">${schematic}</div>
-<div class="diag-systems-wrap">
-  <div class="diag-systems" style="--diag-name-w:${nameW}px;--diag-detail-w:${detailW}px;--diag-status-w:${statusW}px;">${rows}</div>
+<div class="diag-systems" style="--diag-name-w:${nameW}px;--diag-detail-w:${detailW}px;--diag-status-w:${statusW}px;">${rows}</div>
+<div class="diag-charts-row">
+  <div class="diag-chart-rag">${chart}</div>
   <div class="diag-chart-faction">${factionChart}</div>
-</div>
-<div class="diag-chart-rag">${chart}</div>`;
+</div>`;
   }
 
   /* ─────────────────────────────────────────────────────────────
@@ -2804,15 +2805,14 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
 .diag-title { font-size: 9px; color: #44ff88; letter-spacing: 2.5px; text-transform: uppercase; }
 .diag-type { font-size: 9px; color: #336633; letter-spacing: 1px; }
 .diag-schematic { padding: 6px 8px 2px; border-bottom: 1px solid #0a2010; }
-/* v70.18.0: rows on the left + faction chart on the right (side-by-side),
-   then RAG chart underneath spanning the full window width.
-   v70.19.0: faction chart is now fixed at exactly half the panel width on
-   the right hand side. Rows take the remaining space on the left and can
-   horizontally scroll if their max-data columns exceed it. */
-.diag-systems-wrap { display: flex; gap: 12px; padding: 6px 8px; align-items: flex-start; }
-.diag-systems { flex: 0 1 50%; min-width: 0; max-width: 50%; overflow-x: auto; }
-.diag-chart-faction { flex: 0 0 50%; align-self: stretch; min-width: 0; }
-.diag-chart-rag { padding: 0 8px 8px; }
+/* v70.20.0: rows take full window width on top; underneath, RAG chart on the
+   left half and faction chart on the right half. Both halves scale with the
+   panel — SVGs use width="100%" + viewBox to keep their aspect ratios when
+   the user resizes. */
+.diag-systems { padding: 6px 8px; overflow-x: auto; }
+.diag-charts-row { display: flex; gap: 8px; padding: 6px 8px 8px; align-items: stretch; }
+.diag-chart-rag { flex: 1 1 0; min-width: 0; }
+.diag-chart-faction { flex: 1 1 0; min-width: 0; }
 /* v70.17.0: each column auto-sizes to its longest content so no message
    gets truncated. column-gap supplies the 3-character spacing requirement. */
 /* v70.19.0: column widths driven by CSS variables set on the parent
