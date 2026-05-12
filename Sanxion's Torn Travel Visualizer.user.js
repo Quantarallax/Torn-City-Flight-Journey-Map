@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.28.0
+// @version      70.29.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1045,7 +1045,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.28.0</p>
+    <p class="ver-t">Version 70.29.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1376,7 +1376,7 @@ ${dots}
   let lastOscFlyingState = null;
 
   function randomiseDiagnostics() {
-    if (!S.diagnostics) return;
+    if (!S.diagnostics || !S.diagnostics.systems || !S.diagnostics.systems.length) return -1;
     const rnd = () => {
       const r = Math.random();
       if (r < 0.72) return 'green';
@@ -1388,10 +1388,27 @@ ${dots}
       if (!arr || !arr.length) return '';
       return arr[Math.floor(Math.random() * arr.length)];
     };
-    S.diagnostics.systems.forEach(s => {
-      s.status = rnd();
-      s.detail = pickDetail(s, s.status);
-    });
+    // v70.29.0: flip ONE random system per call, not all of them. The
+    // returned index lets the caller flash the affected row white for half a
+    // second to make the change visible. The gear row is still eligible —
+    // its RAG colour can change even though the renderer overrides its
+    // detail text to RETRACTED/LOWERED.
+    const idx = Math.floor(Math.random() * S.diagnostics.systems.length);
+    const s = S.diagnostics.systems[idx];
+    s.status = rnd();
+    s.detail = pickDetail(s, s.status);
+    return idx;
+  }
+
+  // v70.29.0: highlights the row whose system has just changed in white for
+  // 500ms, then lets it revert to its normal RAG colours. Bails silently if
+  // the user isn't on the diag page or the row isn't in the DOM.
+  function flashDiagRow(idx) {
+    if (idx < 0 || S.page !== 'diag') return;
+    const row = document.querySelector(`.diag-row[data-row-idx="${idx}"]`);
+    if (!row) return;
+    row.classList.add('flashing');
+    setTimeout(() => { row.classList.remove('flashing'); }, 500);
   }
 
   function recordFlightSample() {
@@ -1426,10 +1443,13 @@ ${dots}
     stopFlightSampling();
     flightSampleTimer = setInterval(() => {
       if (!S.flying) { stopFlightSampling(); return; }
-      randomiseDiagnostics();
+      const idx = randomiseDiagnostics();
       recordFlightSample();
       saveS();
-      if (S.page === 'diag') renderDiagPage();
+      if (S.page === 'diag') {
+        renderDiagPage();
+        flashDiagRow(idx);
+      }
     }, 30000);
   }
 
@@ -1441,8 +1461,9 @@ ${dots}
     stopDiagRandomiser();
     diagRandomTimer = setInterval(() => {
       if (S.page !== 'diag') return;
-      randomiseDiagnostics();
+      const idx = randomiseDiagnostics();
       renderDiagPage();
+      flashDiagRow(idx);
     }, 10000);
   }
 
@@ -1737,7 +1758,7 @@ ${dots}
     // v70.16.0: all three columns uppercased; gaps widened to 3 character
     // widths (~18px in the monospace stack) and the block is left-justified
     // rather than spanning the full row.
-    const rows = d.systems.map(s => {
+    const rows = d.systems.map((s, i) => {
       let col, label, detail;
       const name = (s.name || '').toUpperCase();
       if (isLanded) {
@@ -1750,7 +1771,9 @@ ${dots}
         const detailRaw = (s.id === 'gear' && gearDisplayDetail !== null) ? gearDisplayDetail : s.detail;
         detail = (detailRaw || '').toUpperCase();
       }
-      return `<div class="diag-row">
+      // v70.29.0: data-row-idx lets the flash helper target the single row
+      // whose system has just changed.
+      return `<div class="diag-row" data-row-idx="${i}">
   <span class="diag-ind" style="background:${col}"></span>
   <span class="diag-name">${name}</span>
   <span class="diag-detail">${detail}</span>
@@ -3212,6 +3235,21 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
   font-size: 9px; font-weight: bold; letter-spacing: 0.5px;
   text-transform: uppercase;
   white-space: nowrap;
+}
+/* v70.29.0: brief white flash on the one row whose system has just been
+   re-randomised. Inline style="background:..." / style="color:..." on the
+   indicator dot and status label use !important here to override them for
+   the 500ms window. */
+.diag-row.flashing .diag-name,
+.diag-row.flashing .diag-detail,
+.diag-row.flashing .diag-status {
+  color: #ffffff !important;
+  transition: color 60ms linear;
+}
+.diag-row.flashing .diag-ind {
+  background: #ffffff !important;
+  box-shadow: 0 0 6px #ffffff;
+  transition: background 60ms linear, box-shadow 60ms linear;
 }
 #tcfv.radar-mode #tcfv-diag { background: var(--rc-dark); }
 #tcfv.radar-mode .diag-header { border-bottom-color: var(--rc-line); }
