@@ -25,7 +25,7 @@ There is a airplane diagnostic mode to asses the state of the airplane.
 
 <img width="993" height="676" alt="image" src="https://github.com/user-attachments/assets/0aea4109-94d8-4e8f-b080-8b228e785001" />
 
-You can enter a public API if you so wish. This basically gives you more of a direct method of seeing the current flight data.
+You can enter an API if you so wish. This basically gives you more of a direct method of seeing the current flight data.
 
 Have a nice flight! Stay safe.
 
