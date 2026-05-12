@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.26.0
+// @version      70.27.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -205,7 +205,7 @@
     ticket:'standard', player:'Pilot', flying:false, isReturn:false,
     prevPhase:'', phasesTriggered:{}, turbTriggered:false, halfwayFired:false,
     log:[], px:20, py:60, pw:680, ph_panel:520, min:false, page:'main', apiKey:'',
-    previewDst:null, inflightSchedule:null, planeScale:100, inflightLogStart:null, diagnostics:null, airportClosed:false, inHospital:false, terrorThreat:false, stateOfEmergency:false, flightHistory:{ samples:[] },
+    previewDst:null, inflightSchedule:null, planeScale:100, inflightLogStart:null, diagnostics:null, airportClosed:false, inHospital:false, terrorThreat:false, stateOfEmergency:false, flightHistory:{ samples:[] }, factionName:'', commSchedule:[], commUsedIds:[],
   };
 
   const saveS = () => {
@@ -215,7 +215,7 @@
         ticket:S.ticket, player:S.player, flying:S.flying, isReturn:S.isReturn,
         prevPhase:S.prevPhase, phasesTriggered:S.phasesTriggered, turbTriggered:S.turbTriggered, halfwayFired:S.halfwayFired,
         log:S.log.slice(-30), px:S.px, py:S.py, pw:S.pw, ph_panel:S.ph_panel,
-        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale, inflightLogStart:S.inflightLogStart, diagnostics:S.diagnostics, airportClosed:S.airportClosed, inHospital:S.inHospital, terrorThreat:S.terrorThreat, stateOfEmergency:S.stateOfEmergency, flightHistory:S.flightHistory,
+        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale, inflightLogStart:S.inflightLogStart, diagnostics:S.diagnostics, airportClosed:S.airportClosed, inHospital:S.inHospital, terrorThreat:S.terrorThreat, stateOfEmergency:S.stateOfEmergency, flightHistory:S.flightHistory, factionName:S.factionName, commSchedule:S.commSchedule, commUsedIds:S.commUsedIds,
       }));
     } catch(e) {}
   };
@@ -230,6 +230,9 @@
       if (!S.planeScale) S.planeScale = 100;
       if (S.inflightLogStart === undefined) S.inflightLogStart = null;
       if (!S.flightHistory || !Array.isArray(S.flightHistory.samples)) S.flightHistory = { samples: [] };
+      if (!Array.isArray(S.commSchedule)) S.commSchedule = [];
+      if (!Array.isArray(S.commUsedIds)) S.commUsedIds = [];
+      if (typeof S.factionName !== 'string') S.factionName = '';
     } catch(e) {}
   };
 
@@ -854,6 +857,9 @@ ${dots}
     const progress = Math.min(1, Math.max(0, elapsed / total));
     const timeLeft = Math.max(0, S.arrTime - now);
     const phase = getPhase(progress);
+    // v70.27.0: fire any comm messages whose scheduled time has come. The
+    // helper is a no-op when the schedule is empty.
+    processCommSchedule();
     const altNow = getAlt(progress, timeLeft);
     const arrDate = new Date(S.arrTime);
     const arrivalTime = `${String(arrDate.getHours()).padStart(2,'0')}:${String(arrDate.getMinutes()).padStart(2,'0')}`;
@@ -1039,7 +1045,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.26.0</p>
+    <p class="ver-t">Version 70.27.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -2092,7 +2098,9 @@ ${dots}
     if (!S.apiKey) return;
     GM_xmlhttpRequest({
       method: 'GET',
-      url: `https://api.torn.com/v2/faction?selections=members&key=${S.apiKey}`,
+      // v70.27.0: also fetch the faction's basic info so we can substitute
+      // the real faction name into the comm-message templates.
+      url: `https://api.torn.com/v2/faction?selections=basic,members&key=${S.apiKey}`,
       onload: r => {
         try {
           const data = JSON.parse(r.responseText);
@@ -2102,6 +2110,10 @@ ${dots}
               el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction error: ' + ferr + ' — check api key</div>';
             }
             return;
+          }
+          if (data.basic && data.basic.name && data.basic.name !== S.factionName) {
+            S.factionName = data.basic.name;
+            saveS();
           }
           const rawMembers = data.members || {};
           const members = Array.isArray(rawMembers)
@@ -2707,6 +2719,121 @@ ${dots}
   }
 
   /* ─────────────────────────────────────────────────────────────
+     PLAYER ↔ FACTION SAME-FLIGHT-PATH COMM MESSAGES (v70.27.0)
+
+     During the player's flight, if any faction members are flying the same
+     route (Torn ↔ destination, in either direction), 1 or 2 random
+     commentary messages get posted to the log. Schedule is generated at
+     takeoff and persisted, so a mid-flight refresh doesn't re-roll the
+     schedule.
+
+     Templates use placeholders [player], [faction member],
+     [destination], [faction member destination], [Faction Name].
+     Same-direction templates substitute the player's destination (which is
+     also the faction member's destination by definition).
+     Opposite-direction templates substitute the faction member's
+     destination — which is the player's src (where they came from / are
+     returning to).
+
+     Dedup: a faction member is referenced at most once per flight via
+     S.commUsedIds. If only one faction member is on the same flight path
+     and the schedule has two messages, the second fire finds nobody
+     eligible and is silently skipped — fulfilling "If two messages are set
+     to print and only one other player is on the same flight path, it
+     should print just once."
+  ───────────────────────────────────────────────────────────── */
+
+  const COMM_TEMPLATES = {
+    opposite: [
+      (p, m, memDest) => `${p} waves out the window to ${m} passing on their way to ${memDest}.`,
+      (p, m, memDest) => `${m} howls past on their way to ${memDest}.`,
+    ],
+    same: [
+      (p, m, memDest) => `${p} sees ${m} flying in parallel for a while, on their way to ${memDest}.`,
+      (p, m, memDest, fac) => `${p} sees ${m} flying just outside the window heading to ${memDest}, and does the ${fac} hand signals. ${m} nods back, affirmative.`,
+      (p, m, memDest) => `${p} hears a scream of engines as ${m} howls past the airplane towards ${memDest}.`,
+    ],
+  };
+
+  function generateCommSchedule(dep, arr) {
+    const dur = arr - dep;
+    if (dur <= 0) return [];
+    // Keep messages inside the in-flight window: 15%..85% of total duration,
+    // so they don't collide with takeoff/descent commentary.
+    const minStart = dep + dur * 0.15;
+    const maxEnd = dep + dur * 0.85;
+    const usable = maxEnd - minStart;
+    if (usable <= 0) return [];
+    const numMsgs = 1 + Math.floor(Math.random() * 2); // 1 or 2
+    if (numMsgs === 1) {
+      const at = minStart + Math.random() * usable;
+      return [{ at, dirPref: 'any' }];
+    }
+    // Two messages — split usable range in half so they're spread out.
+    const half = usable / 2;
+    const t1 = minStart + Math.random() * half;
+    const t2 = minStart + half + Math.random() * half;
+    // Try to vary direction — one same, one opposite.
+    const firstSame = Math.random() < 0.5;
+    return [
+      { at: t1, dirPref: firstSame ? 'same' : 'opposite' },
+      { at: t2, dirPref: firstSame ? 'opposite' : 'same' },
+    ];
+  }
+
+  function tryFireCommMessage(dirPref) {
+    if (!S.dst || !S.src) return false;
+    const used = S.commUsedIds || [];
+    const sameDir = [];
+    const oppDir = [];
+    for (const id of Object.keys(factionData)) {
+      if (id === 'self_player') continue;
+      if (used.indexOf(id) !== -1) continue;
+      const m = factionData[id];
+      if (!m || !m.src || !m.dst) continue;
+      if (m.src === S.src && m.dst === S.dst) sameDir.push({ id, m });
+      else if (m.src === S.dst && m.dst === S.src) oppDir.push({ id, m });
+    }
+    let pool, dir;
+    if (dirPref === 'same' && sameDir.length) { pool = sameDir; dir = 'same'; }
+    else if (dirPref === 'opposite' && oppDir.length) { pool = oppDir; dir = 'opposite'; }
+    else if (sameDir.length === 0 && oppDir.length === 0) return false;
+    else if (sameDir.length === 0) { pool = oppDir; dir = 'opposite'; }
+    else if (oppDir.length === 0) { pool = sameDir; dir = 'same'; }
+    else {
+      pool = Math.random() < 0.5 ? sameDir : oppDir;
+      dir = (pool === sameDir) ? 'same' : 'opposite';
+    }
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    const memDest = DESTS[pick.m.dst]?.city || pick.m.dst;
+    const playerName = S.player || 'You';
+    const factionName = S.factionName || 'faction';
+    const templates = COMM_TEMPLATES[dir];
+    const tmpl = templates[Math.floor(Math.random() * templates.length)];
+    const msg = tmpl(playerName, pick.m.name, memDest, factionName);
+    addLog(msg);
+    if (!S.commUsedIds) S.commUsedIds = [];
+    S.commUsedIds.push(pick.id);
+    return true;
+  }
+
+  // v70.27.0: called from tick() during the in-flight phase. Fires any
+  // scheduled comm message whose time has come, then drops it from the
+  // schedule whether or not a faction member was available to reference.
+  function processCommSchedule() {
+    if (!S.flying) return;
+    if (!Array.isArray(S.commSchedule) || S.commSchedule.length === 0) return;
+    const now = Date.now();
+    let mutated = false;
+    while (S.commSchedule.length > 0 && now >= S.commSchedule[0].at) {
+      const next = S.commSchedule.shift();
+      tryFireCommMessage(next.dirPref);
+      mutated = true;
+    }
+    if (mutated) saveS();
+  }
+
+  /* ─────────────────────────────────────────────────────────────
      START FLIGHT
   ───────────────────────────────────────────────────────────── */
 
@@ -2729,6 +2856,11 @@ ${dots}
     // v70.16.0: reset RAG history and kick off the flight sampler so the
     // diagnostics chart fills from left to right across this flight.
     S.flightHistory = { samples: [] };
+    // v70.27.0: generate the comm-message schedule for this flight (1 or 2
+    // messages spread across the in-flight phase) and reset the
+    // already-referenced members list so the new flight starts fresh.
+    S.commSchedule = generateCommSchedule(dep, arr);
+    S.commUsedIds = [];
     S.diagnostics = generateDiagnostics();
     recordFlightSample();
     startFlightSampling();
