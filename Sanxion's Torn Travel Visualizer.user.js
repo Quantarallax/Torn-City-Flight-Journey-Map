@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.27.0
+// @version      70.28.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1045,7 +1045,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.27.0</p>
+    <p class="ver-t">Version 70.28.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -2791,6 +2791,12 @@ ${dots}
       if (used.indexOf(id) !== -1) continue;
       const m = factionData[id];
       if (!m || !m.src || !m.dst) continue;
+      // v70.28.0: per spec, "Do not use [player] and [faction member] if
+      // they are the same name." The self_player check above covers the
+      // sentinel id, but the API may also list the player under their
+      // actual user id — guard against that by skipping any member whose
+      // name matches the player's.
+      if (S.player && m.name === S.player) continue;
       if (m.src === S.src && m.dst === S.dst) sameDir.push({ id, m });
       else if (m.src === S.dst && m.dst === S.src) oppDir.push({ id, m });
     }
