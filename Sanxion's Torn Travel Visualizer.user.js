@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.25.0
+// @version      70.26.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1039,7 +1039,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.25.0</p>
+    <p class="ver-t">Version 70.26.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1516,86 +1516,20 @@ ${dots}
 </svg>`;
   }
 
-  // v70.21.0: oscilloscope display for the diagnostics page. Three sine waves
-  // at different frequencies, amplitudes, and phases, each scrolling
-  // horizontally at a different speed via SMIL translate. The wave paths are
-  // built at 2x the visible width so animating translate(-W,0) loops
-  // seamlessly. SVG uses width="100%" + viewBox so the whole display scales
-  // with the panel size.
-  // v70.24.0: waveforms are now music-style (amplitude envelope × harmonic
-  // mix of 3 sine components) rather than pure sines, and the lines have a
-  // slight CRT glow via a Gaussian-blur+merge filter. When the player is
-  // not flying (parked at an airport / abroad), the oscilloscope is stopped
-  // — all three traces flatten to a horizontal line and the SMIL animations
-  // are omitted.
-  // v70.25.0: lines are now all light grey (varied only by opacity) and the
-  // music wave has discrete Gaussian "kick" spikes at fixed positions, some
-  // of them quite extreme — so the trace reads like a real audio signal
-  // with beats and pulses rather than a continuous tone. Kicks at x and
-  // x+W are duplicated so the path still loops seamlessly under SMIL
-  // translate(-W,0).
+  // v70.21.0: oscilloscope display for the diagnostics page.
+  // v70.26.0: rewritten — three flat horizontal lines stacked exactly on
+  // each other at H/2. A JavaScript scheduler fires random "beats" every
+  // 2–8 seconds during flight: each beat replaces the three flat paths
+  // with random spike paths for a fraction of a second (150–400ms), then
+  // reverts to flat. Lines all light grey, CRT glow via Gaussian blur.
+  // When not flying, the scheduler is stopped and the traces stay flat.
   function renderOscilloscope() {
     const W = 400, H = 60;
-    const samples = 280;
-    const totalW = W * 2;
+    const flatPath = `M0,${(H/2).toFixed(1)} L${W.toFixed(1)},${(H/2).toFixed(1)}`;
     const animated = !!S.flying;
-    const buildMusicWave = (ampBase, freqLow, freqMid, freqHigh, envCycles, phase, kicks) => {
-      let d = '';
-      for (let i = 0; i <= samples; i++) {
-        const x = (i / samples) * totalW;
-        const envelope = 0.35 + 0.65 * Math.abs(Math.sin((x / W) * envCycles * Math.PI + phase));
-        const wave =
-          0.55 * Math.sin((x / W) * freqLow * 2 * Math.PI + phase) +
-          0.30 * Math.sin((x / W) * freqMid * 2 * Math.PI + phase * 0.7) +
-          0.15 * Math.sin((x / W) * freqHigh * 2 * Math.PI + phase * 1.4);
-        // Kick spikes — narrow Gaussians multiplied into the amplitude. Each
-        // kick is replicated at +W so the seamless-loop property of the
-        // path is preserved across translate(-W,0).
-        let kickBoost = 0;
-        for (const k of kicks) {
-          const sigSq = k.width * k.width;
-          const dA = x - k.pos;
-          const dB = x - (k.pos + W);
-          kickBoost += k.amp * Math.exp(-(dA * dA) / (2 * sigSq));
-          kickBoost += k.amp * Math.exp(-(dB * dB) / (2 * sigSq));
-        }
-        const y = (H / 2) + ampBase * (envelope + kickBoost) * wave;
-        d += (i === 0 ? 'M' : 'L') + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
-      }
-      return d;
-    };
-    const flatLine = `M0,${(H/2).toFixed(1)} L${totalW.toFixed(1)},${(H/2).toFixed(1)}`;
-    // Each wave gets its own set of kicks. Some are deliberately extreme
-    // (amp > 1) so the trace occasionally bursts well past the envelope.
-    const kicks1 = [
-      { pos: W * 0.12, amp: 1.4, width: W / 80 },
-      { pos: W * 0.31, amp: 0.7, width: W / 110 },
-      { pos: W * 0.55, amp: 2.0, width: W / 65 },
-      { pos: W * 0.78, amp: 0.9, width: W / 95 },
-    ];
-    const kicks2 = [
-      { pos: W * 0.08, amp: 0.8, width: W / 100 },
-      { pos: W * 0.38, amp: 1.6, width: W / 70 },
-      { pos: W * 0.66, amp: 0.6, width: W / 110 },
-      { pos: W * 0.89, amp: 1.1, width: W / 85 },
-    ];
-    const kicks3 = [
-      { pos: W * 0.21, amp: 1.2, width: W / 90 },
-      { pos: W * 0.47, amp: 0.5, width: W / 120 },
-      { pos: W * 0.72, amp: 1.8, width: W / 75 },
-      { pos: W * 0.95, amp: 0.7, width: W / 100 },
-    ];
-    const wave1 = animated ? buildMusicWave(11, 3, 7, 17, 4, 0, kicks1) : flatLine;
-    const wave2 = animated ? buildMusicWave(9, 2, 5, 11, 3, Math.PI/3, kicks2) : flatLine;
-    const wave3 = animated ? buildMusicWave(13, 4, 9, 19, 5, Math.PI/1.5, kicks3) : flatLine;
-    const animSegment = (dur) => animated
-      ? `<animateTransform attributeName="transform" type="translate" from="0,0" to="-${W},0" dur="${dur}" repeatCount="indefinite"/>`
-      : '';
     const stoppedLabel = animated
       ? ''
       : `<text x="${W - 6}" y="${H - 4}" font-size="6" fill="#5a8a5a" font-family="monospace" letter-spacing="0.5" text-anchor="end">STOPPED</text>`;
-    // v70.25.0: all wave strokes use the same light grey colour. Distinct
-    // opacities keep them visually separable as overlapping traces.
     const greyLine = '#cccccc';
     return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" width="100%" style="display:block">
   <defs>
@@ -1620,13 +1554,70 @@ ${dots}
   </g>
   <clipPath id="tcfv-osc-clip"><rect x="0" y="0" width="${W}" height="${H}"/></clipPath>
   <g clip-path="url(#tcfv-osc-clip)" filter="url(#tcfv-osc-glow)">
-    <g><path d="${wave3}" fill="none" stroke="${greyLine}" stroke-width="0.8" opacity="0.55"/>${animSegment('13s')}</g>
-    <g><path d="${wave2}" fill="none" stroke="${greyLine}" stroke-width="0.8" opacity="0.70"/>${animSegment('8s')}</g>
-    <g><path d="${wave1}" fill="none" stroke="${greyLine}" stroke-width="0.95" opacity="0.95"/>${animSegment('5s')}</g>
+    <path class="tcfv-osc-trace" d="${flatPath}" fill="none" stroke="${greyLine}" stroke-width="0.85" opacity="0.55"/>
+    <path class="tcfv-osc-trace" d="${flatPath}" fill="none" stroke="${greyLine}" stroke-width="0.85" opacity="0.70"/>
+    <path class="tcfv-osc-trace" d="${flatPath}" fill="none" stroke="${greyLine}" stroke-width="0.95" opacity="0.95"/>
   </g>
   <text x="6" y="10" font-size="6" fill="#5a8a5a" font-family="monospace" letter-spacing="0.5">OSC</text>
   ${stoppedLabel}
 </svg>`;
+  }
+
+  // v70.26.0: beat scheduler. Runs while S.flying is true and the
+  // oscilloscope is on screen. Picks a random 2–8s delay, fires a beat
+  // (random spike pattern on all three trace paths), holds for 150–400ms,
+  // reverts to flat, schedules the next beat. stopOscBeats clears any
+  // pending timer when the flight state changes or the page is rebuilt.
+  let oscBeatTimer = null;
+  let oscRevertTimer = null;
+  const OSC_W = 400;
+  const OSC_H = 60;
+  function buildOscFlatPath() {
+    return `M0,${(OSC_H/2).toFixed(1)} L${OSC_W.toFixed(1)},${(OSC_H/2).toFixed(1)}`;
+  }
+  function buildOscBeatPath(ampRange) {
+    const points = 6;
+    const midY = OSC_H / 2;
+    let d = '';
+    for (let i = 0; i <= points; i++) {
+      const x = (i / points) * OSC_W;
+      // Endpoints stay at the centre so beats start/end at the flat line.
+      const offset = (i === 0 || i === points) ? 0 : (Math.random() - 0.5) * 2 * ampRange;
+      const y = midY + offset;
+      d += (i === 0 ? 'M' : 'L') + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
+    }
+    return d;
+  }
+  function stopOscBeats() {
+    if (oscBeatTimer) { clearTimeout(oscBeatTimer); oscBeatTimer = null; }
+    if (oscRevertTimer) { clearTimeout(oscRevertTimer); oscRevertTimer = null; }
+  }
+  function startOscBeats() {
+    stopOscBeats();
+    const fireBeat = () => {
+      if (!S.flying) { stopOscBeats(); return; }
+      const traces = document.querySelectorAll('#tcfv-diag-osc .tcfv-osc-trace');
+      if (traces.length !== 3) { stopOscBeats(); return; }
+      // Three independent random amplitudes — each trace beats differently.
+      const beats = [
+        buildOscBeatPath(18),
+        buildOscBeatPath(14),
+        buildOscBeatPath(10),
+      ];
+      traces.forEach((tr, i) => tr.setAttribute('d', beats[i]));
+      // Hold the beat for a fraction of a second, then revert to flat.
+      const holdMs = 150 + Math.random() * 250;
+      oscRevertTimer = setTimeout(() => {
+        const flat = buildOscFlatPath();
+        const tracesNow = document.querySelectorAll('#tcfv-diag-osc .tcfv-osc-trace');
+        tracesNow.forEach(tr => tr.setAttribute('d', flat));
+      }, holdMs);
+      // Next beat in 2–8s.
+      const nextMs = 2000 + Math.random() * 6000;
+      oscBeatTimer = setTimeout(fireBeat, nextMs);
+    };
+    // Initial delay 2–8s before the first beat.
+    oscBeatTimer = setTimeout(fireBeat, 2000 + Math.random() * 6000);
   }
 
   // v70.17.0/v70.18.0: faction-activity chart on the right of the textual
@@ -1769,7 +1760,10 @@ ${dots}
     const charPx = 5.4;
     const nameW = Math.ceil((d.maxNameLen || 0) * charPx) + 4;
     const detailW = Math.ceil((d.maxDetailLen || 0) * charPx) + 4;
-    const statusW = 56;
+    // v70.26.0: status column was 56px which truncated "MAINTENANCE" (11
+    // chars × 5.4px = 59px) when the plane is parked. Widened to fit the
+    // longest status word that can appear in either flying or landed state.
+    const statusW = Math.ceil(Math.max('MAINTENANCE'.length, 'YELLOW'.length) * charPx) + 8;
     // v70.21.0: smart rebuild — if the page already has the oscilloscope DOM
     // in place, only refresh the dynamic content (rows, charts, header
     // schematic) so the SMIL-animated oscilloscope keeps scrolling without
@@ -1794,6 +1788,10 @@ ${dots}
   <div class="diag-chart-rag">${chart}</div>
   <div class="diag-chart-faction">${factionChart}</div>
 </div>`;
+      // v70.26.0: kick off the beat scheduler immediately after building the
+      // oscilloscope DOM (only while flying — stopped state stays flat).
+      stopOscBeats();
+      if (currentlyFlying) startOscBeats();
     } else {
       const typeEl = inner.querySelector('.diag-type');
       if (typeEl) typeEl.textContent = acType;
@@ -1810,13 +1808,14 @@ ${dots}
       if (ragEl) ragEl.innerHTML = chart;
       const facEl = inner.querySelector('.diag-chart-faction');
       if (facEl) facEl.innerHTML = factionChart;
-      // Oscilloscope intentionally left alone — its SMIL animations continue.
-      // v70.24.0: but if flight state has flipped (takeoff or landing), we
-      // need to swap between animated music waveforms and the flat
-      // stopped trace, so rebuild only in that case.
+      // Oscilloscope intentionally left alone — its beat scheduler keeps
+      // firing between renders. But if flight state has flipped (takeoff or
+      // landing), rebuild it and restart/stop the scheduler.
       if (lastOscFlyingState !== currentlyFlying) {
         const oscEl = document.getElementById('tcfv-diag-osc');
         if (oscEl) oscEl.innerHTML = renderOscilloscope();
+        stopOscBeats();
+        if (currentlyFlying) startOscBeats();
       }
     }
     lastOscFlyingState = currentlyFlying;
@@ -2575,6 +2574,13 @@ ${dots}
 
   function hookClicks() {
     document.addEventListener('click', e => {
+      // v70.26.0: ignore clicks originating inside our own panel. The 5-level
+      // textContent walk-up below would otherwise match "return"+"torn" inside
+      // log messages or labels and spuriously trigger a return flight when
+      // the user just dragged the panel (browsers fire a click after
+      // mouseup even on a short drag).
+      const myPanel = document.getElementById('tcfv');
+      if (myPanel && myPanel.contains(e.target)) return;
       let t = e.target;
       for (let i = 0; i < 5; i++) {
         if (!t) break;
