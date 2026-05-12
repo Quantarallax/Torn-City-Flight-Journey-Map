@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.24.0
+// @version      70.25.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -711,6 +711,21 @@ ${dots}
     tick();
   }
 
+  // v70.25.0: when an airport-closed state begins (race / hospital / terror
+  // threat / state of emergency), wipe any leftover preview destination and
+  // remove the flight-path + plane visuals. Without this, a destination the
+  // player had previewed before the closure stays drawn on the map, making
+  // it look like they're flying to that city while the airport is closed.
+  function clearClosedStateVisuals() {
+    S.previewDst = null;
+    try {
+      drawPath(null, null);
+      drawPlane(0, S.src, S.src);
+      highlightDots(S.src, null);
+      updateStats(0, 0);
+    } catch (e) { /* draw helpers may not be ready in early ticks */ }
+  }
+
   function tick() {
     const bodyText = document.body ? (document.body.textContent || '') : '';
     const HOSP_STRING = 'not available while in hospital';
@@ -719,6 +734,7 @@ ${dots}
     if (inHospitalNow) {
       if (!S.inHospital) {
         S.inHospital = true;
+        clearClosedStateVisuals();
         const hm = '\x01You are in <a href="https://www.torn.com/hospitalview.php" target="_blank" style="color:#ff9944;text-decoration:underline">hospital</a>, recuperating.';
         S.log.push(hm);
         recentMessages.push('in hospital');
@@ -743,6 +759,7 @@ ${dots}
       _noRaceCount = 0;
       if (!S.airportClosed) {
         S.airportClosed = true;
+        clearClosedStateVisuals();
         commentaryQueue = [];
         draining = false;
         const am = '\x01Airport closed — you are in a <a href="https://www.torn.com/page.php?sid=racing" target="_blank" style="color:#ff6666;text-decoration:underline">race</a>.';
@@ -781,6 +798,7 @@ ${dots}
     if (soeTextPresent) {
       if (!S.stateOfEmergency) {
         S.stateOfEmergency = true;
+        clearClosedStateVisuals();
         addLog('Armed security turn you away.');
         setTimeout(() => {
           if (S.stateOfEmergency) addLog('Torn City is in lockdown. Airport closed until further notice.');
@@ -806,6 +824,7 @@ ${dots}
     if (ttTextPresent) {
       if (!S.terrorThreat) {
         S.terrorThreat = true;
+        clearClosedStateVisuals();
         addLog('Armed security point their weapons at you, denying entry.');
         setTimeout(() => {
           if (S.terrorThreat) addLog('Torn City is in lockdown. Airport closed until further notice.');
@@ -1020,7 +1039,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.24.0</p>
+    <p class="ver-t">Version 70.25.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1433,7 +1452,9 @@ ${dots}
   // chart sits underneath the rows spanning the full width.
   function renderFlightHistoryChart() {
     const W = 420, H = 180;
-    const padL = 28, padR = 32, padT = 14, padB = 22;
+    // v70.25.0: padT bumped from 14 to 28 to leave room for the legend above
+    // the plot area so curve paths can't draw over it.
+    const padL = 28, padR = 32, padT = 28, padB = 22;
     const plotW = W - padL - padR;
     const plotH = H - padT - padB;
     const samples = (S.flightHistory && S.flightHistory.samples) || [];
@@ -1485,11 +1506,11 @@ ${dots}
   <path d="${yellowPath}" fill="none" stroke="#ffcc44" stroke-width="1.2" opacity="0.9"/>
   <path d="${redPath}" fill="none" stroke="#ff4444" stroke-width="1.2" opacity="0.9"/>
   <path d="${altPath}" fill="none" stroke="#cccccc" stroke-width="1.1" opacity="0.85"/>
-  <g transform="translate(${padL + 4}, ${padT + 2})" font-size="6" font-family="monospace">
-    <text x="0" y="6" fill="#44ff88">&#9472; GREEN</text>
-    <text x="0" y="14" fill="#ffcc44">&#9472; YELLOW</text>
-    <text x="0" y="22" fill="#ff4444">&#9472; RED</text>
-    <text x="0" y="30" fill="#cccccc">&#9472; ALT</text>
+  <g transform="translate(${padL}, 10)" font-size="7" font-family="monospace">
+    <text x="0" y="0" fill="#44ff88">&#9472; GREEN</text>
+    <text x="58" y="0" fill="#ffcc44">&#9472; YELLOW</text>
+    <text x="124" y="0" fill="#ff4444">&#9472; RED</text>
+    <text x="172" y="0" fill="#cccccc">&#9472; ALT</text>
   </g>
   ${emptyMsg}
 </svg>`;
@@ -1507,17 +1528,18 @@ ${dots}
   // not flying (parked at an airport / abroad), the oscilloscope is stopped
   // — all three traces flatten to a horizontal line and the SMIL animations
   // are omitted.
+  // v70.25.0: lines are now all light grey (varied only by opacity) and the
+  // music wave has discrete Gaussian "kick" spikes at fixed positions, some
+  // of them quite extreme — so the trace reads like a real audio signal
+  // with beats and pulses rather than a continuous tone. Kicks at x and
+  // x+W are duplicated so the path still loops seamlessly under SMIL
+  // translate(-W,0).
   function renderOscilloscope() {
     const W = 400, H = 60;
-    const samples = 240;
+    const samples = 280;
     const totalW = W * 2;
     const animated = !!S.flying;
-    // Build a music-like wave: an amplitude envelope (so the trace has loud
-    // and quiet sections) multiplied by a sum of three integer-frequency
-    // sine components. Integer frequencies + integer envCycles guarantee a
-    // seamless loop at x = W (because sin((x+W)/W * k * 2π) === sin(x/W * k * 2π)
-    // for integer k, and |sin(envCycles * kπ + φ)| === |sin(φ)| for integer k).
-    const buildMusicWave = (ampBase, freqLow, freqMid, freqHigh, envCycles, phase) => {
+    const buildMusicWave = (ampBase, freqLow, freqMid, freqHigh, envCycles, phase, kicks) => {
       let d = '';
       for (let i = 0; i <= samples; i++) {
         const x = (i / samples) * totalW;
@@ -1526,23 +1548,55 @@ ${dots}
           0.55 * Math.sin((x / W) * freqLow * 2 * Math.PI + phase) +
           0.30 * Math.sin((x / W) * freqMid * 2 * Math.PI + phase * 0.7) +
           0.15 * Math.sin((x / W) * freqHigh * 2 * Math.PI + phase * 1.4);
-        const y = (H / 2) + ampBase * envelope * wave;
+        // Kick spikes — narrow Gaussians multiplied into the amplitude. Each
+        // kick is replicated at +W so the seamless-loop property of the
+        // path is preserved across translate(-W,0).
+        let kickBoost = 0;
+        for (const k of kicks) {
+          const sigSq = k.width * k.width;
+          const dA = x - k.pos;
+          const dB = x - (k.pos + W);
+          kickBoost += k.amp * Math.exp(-(dA * dA) / (2 * sigSq));
+          kickBoost += k.amp * Math.exp(-(dB * dB) / (2 * sigSq));
+        }
+        const y = (H / 2) + ampBase * (envelope + kickBoost) * wave;
         d += (i === 0 ? 'M' : 'L') + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
       }
       return d;
     };
-    // Flat-line path for the stopped state. Drawn the same width as the
-    // animated paths so the SVG layout is identical.
     const flatLine = `M0,${(H/2).toFixed(1)} L${totalW.toFixed(1)},${(H/2).toFixed(1)}`;
-    const wave1 = animated ? buildMusicWave(14, 3, 7, 17, 4, 0) : flatLine;
-    const wave2 = animated ? buildMusicWave(11, 2, 5, 11, 3, Math.PI/3) : flatLine;
-    const wave3 = animated ? buildMusicWave(16, 4, 9, 19, 5, Math.PI/1.5) : flatLine;
+    // Each wave gets its own set of kicks. Some are deliberately extreme
+    // (amp > 1) so the trace occasionally bursts well past the envelope.
+    const kicks1 = [
+      { pos: W * 0.12, amp: 1.4, width: W / 80 },
+      { pos: W * 0.31, amp: 0.7, width: W / 110 },
+      { pos: W * 0.55, amp: 2.0, width: W / 65 },
+      { pos: W * 0.78, amp: 0.9, width: W / 95 },
+    ];
+    const kicks2 = [
+      { pos: W * 0.08, amp: 0.8, width: W / 100 },
+      { pos: W * 0.38, amp: 1.6, width: W / 70 },
+      { pos: W * 0.66, amp: 0.6, width: W / 110 },
+      { pos: W * 0.89, amp: 1.1, width: W / 85 },
+    ];
+    const kicks3 = [
+      { pos: W * 0.21, amp: 1.2, width: W / 90 },
+      { pos: W * 0.47, amp: 0.5, width: W / 120 },
+      { pos: W * 0.72, amp: 1.8, width: W / 75 },
+      { pos: W * 0.95, amp: 0.7, width: W / 100 },
+    ];
+    const wave1 = animated ? buildMusicWave(11, 3, 7, 17, 4, 0, kicks1) : flatLine;
+    const wave2 = animated ? buildMusicWave(9, 2, 5, 11, 3, Math.PI/3, kicks2) : flatLine;
+    const wave3 = animated ? buildMusicWave(13, 4, 9, 19, 5, Math.PI/1.5, kicks3) : flatLine;
     const animSegment = (dur) => animated
       ? `<animateTransform attributeName="transform" type="translate" from="0,0" to="-${W},0" dur="${dur}" repeatCount="indefinite"/>`
       : '';
     const stoppedLabel = animated
       ? ''
       : `<text x="${W - 6}" y="${H - 4}" font-size="6" fill="#5a8a5a" font-family="monospace" letter-spacing="0.5" text-anchor="end">STOPPED</text>`;
+    // v70.25.0: all wave strokes use the same light grey colour. Distinct
+    // opacities keep them visually separable as overlapping traces.
+    const greyLine = '#cccccc';
     return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" width="100%" style="display:block">
   <defs>
     <filter id="tcfv-osc-glow" x="-10%" y="-50%" width="120%" height="200%">
@@ -1566,9 +1620,9 @@ ${dots}
   </g>
   <clipPath id="tcfv-osc-clip"><rect x="0" y="0" width="${W}" height="${H}"/></clipPath>
   <g clip-path="url(#tcfv-osc-clip)" filter="url(#tcfv-osc-glow)">
-    <g><path d="${wave3}" fill="none" stroke="#88ddff" stroke-width="0.8" opacity="0.7"/>${animSegment('13s')}</g>
-    <g><path d="${wave2}" fill="none" stroke="#ffcc44" stroke-width="0.8" opacity="0.75"/>${animSegment('8s')}</g>
-    <g><path d="${wave1}" fill="none" stroke="#44ff88" stroke-width="0.9" opacity="0.9"/>${animSegment('5s')}</g>
+    <g><path d="${wave3}" fill="none" stroke="${greyLine}" stroke-width="0.8" opacity="0.55"/>${animSegment('13s')}</g>
+    <g><path d="${wave2}" fill="none" stroke="${greyLine}" stroke-width="0.8" opacity="0.70"/>${animSegment('8s')}</g>
+    <g><path d="${wave1}" fill="none" stroke="${greyLine}" stroke-width="0.95" opacity="0.95"/>${animSegment('5s')}</g>
   </g>
   <text x="6" y="10" font-size="6" fill="#5a8a5a" font-family="monospace" letter-spacing="0.5">OSC</text>
   ${stoppedLabel}
@@ -1586,7 +1640,9 @@ ${dots}
   // heights including their axis labels.
   function renderFactionFlyingChart() {
     const W = 420, H = 180;
-    const padL = 30, padR = 30, padT = 14, padB = 22;
+    // v70.25.0: padT bumped to 28 to make room for the legend above the
+    // plot area.
+    const padL = 30, padR = 30, padT = 28, padB = 22;
     const plotW = W - padL - padR;
     const plotH = H - padT - padB;
     const samples = (S.flightHistory && S.flightHistory.samples) || [];
@@ -1643,9 +1699,9 @@ ${dots}
   <text x="${W - padR + 18}" y="${(padT + plotH/2 + 2).toFixed(0)}" font-size="6" fill="#5a8a5a" text-anchor="middle" font-family="monospace" transform="rotate(-90 ${W - padR + 18} ${(padT + plotH/2 + 2).toFixed(0)})">ABROAD</text>
   <path d="${abPath}" fill="none" stroke="#ffaa66" stroke-width="1.2" opacity="0.9"/>
   <path d="${flyPath}" fill="none" stroke="#88ddff" stroke-width="1.2" opacity="0.9"/>
-  <g transform="translate(${padL + 4}, ${padT + 2})" font-size="6" font-family="monospace">
-    <text x="0" y="6" fill="#88ddff">&#9472; FLYING</text>
-    <text x="0" y="14" fill="#ffaa66">&#9472; ABROAD</text>
+  <g transform="translate(${padL}, 10)" font-size="7" font-family="monospace">
+    <text x="0" y="0" fill="#88ddff">&#9472; FLYING</text>
+    <text x="64" y="0" fill="#ffaa66">&#9472; ABROAD</text>
   </g>
   ${emptyMsg}
 </svg>`;
@@ -1672,7 +1728,11 @@ ${dots}
     // systems show as in maintenance mode rather than running. The
     // schematic indicators, row dots, detail and status columns all switch
     // to a grey "SHUTDOWN/MAINTENANCE" presentation. Flight Gear's detail
-    // becomes "RETRACTED" per spec rather than "SHUTDOWN".
+    // becomes "LOWERED" per spec rather than "SHUTDOWN".
+    // v70.25.0: gear says LOWERED (not RETRACTED) when on the ground —
+    // physically the gear is deployed when parked, regardless of whether
+    // the airport is open, closed for a race, closed due to a terror
+    // threat, or any other not-flying state.
     const isLanded = !S.flying;
     const greyCol = '#888888';
     const schematic = d.isSmall ? diagSVGSmall(d.systems, isLanded ? greyCol : null) : diagSVGLarge(d.systems, isLanded ? greyCol : null);
@@ -1686,7 +1746,7 @@ ${dots}
       if (isLanded) {
         col = greyCol;
         label = 'MAINTENANCE';
-        detail = (s.id === 'gear') ? 'RETRACTED' : 'SHUTDOWN';
+        detail = (s.id === 'gear') ? 'LOWERED' : 'SHUTDOWN';
       } else {
         col = DIAG_STATUS_COLS[s.status];
         label = s.status.toUpperCase();
