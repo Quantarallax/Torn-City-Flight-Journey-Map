@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.29.0
+// @version      70.30.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -184,9 +184,13 @@
       p => p.isTornCity ? 'Right, back to business.' : null,
     ],
     return_start: [
+      // v70.30.0: only the spec-defined refuel line fires on return start.
+      // Previously this array also included small-plane-only phrasing ("ATC:
+      // ... Runway 2A. Proceed." and "Wheels up. Heading home.") which then
+      // played on Jumbo Jet return journeys — wrong commentary for the
+      // large plane. The plane-size-appropriate takeoff messages handle
+      // the rest from the takeoff phase onwards.
       () => 'Refuel complete. Taxiing to runway. Have a nice flight.',
-      p => `ATC: ${p.name}, you are cleared for take-off. Runway 2A. Proceed.`,
-      () => 'Wheels up. Heading home.',
     ],
   };
 
@@ -1045,7 +1049,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.29.0</p>
+    <p class="ver-t">Version 70.30.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -2992,6 +2996,29 @@ ${dots}
     });
   }
 
+  // v70.30.0: when the API reports a return journey (destination = Torn) but
+  // the local browser has no record of the outbound flight — typical when
+  // the player started the flight on a different PC and refreshed this one
+  // — infer the source city by matching the observed flight duration
+  // against expected durations for every city-pair at the same ticket
+  // method. Returns the best-matching city key, or null if no match is
+  // within ±2 minutes (likely a malformed response).
+  function inferReturnSourceFromDuration(durMs, tk) {
+    if (!durMs || durMs <= 0) return null;
+    let best = null;
+    let bestDelta = Infinity;
+    for (const key of Object.keys(DESTS)) {
+      if (key === 'torn') continue;
+      const expected = getDur(key, 'torn', tk);
+      const delta = Math.abs(expected - durMs);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        best = key;
+      }
+    }
+    return (bestDelta < 120000) ? best : null;
+  }
+
   function initFromApi() {
     if (!S.apiKey) return;
     apiGet(S.apiKey, (err, data) => {
@@ -3006,9 +3033,41 @@ ${dots}
       if (S.flying && Math.abs(S.arrTime - arr) < 10000) return;
       if (dk && dk !== 'torn') {
         startFlightTimes('torn', dk, tk, dep, arr, false);
-      } else if (S.src !== 'torn') {
-        startFlightTimes(S.src, 'torn', tk, dep, arr, true);
+      } else {
+        // v70.30.0: return journey. Use the locally-known src if we have one
+        // (player started this flight on this browser); otherwise infer it
+        // from duration so cross-PC refreshes pick up the in-progress flight.
+        let src = S.src;
+        if (!src || src === 'torn') {
+          src = inferReturnSourceFromDuration(arr - dep, tk);
+        }
+        if (src && src !== 'torn') {
+          startFlightTimes(src, 'torn', tk, dep, arr, true);
+        } else {
+          return;
+        }
       }
+      // v70.30.0: catch-up. startFlightTimes resets prevPhase/phasesTriggered/
+      // halfwayFired as if the flight is starting now. When initFromApi
+      // picks up a flight already in progress (a cross-PC refresh at, say,
+      // 60% completion), that reset would cause the tick loop to fire
+      // takeoff messages, the inflight-start schedule and the halfway
+      // message all over again. Pre-mark every earlier phase as already
+      // triggered, and set prevPhase to the current phase, so only future
+      // transitions emit commentary.
+      const totalMs = arr - dep;
+      const nowProgress = totalMs > 0 ? (Date.now() - dep) / totalMs : 0;
+      if (nowProgress >= 0.05) S.phasesTriggered.takeoff = true;
+      if (nowProgress >= 0.50) S.halfwayFired = true;
+      if (nowProgress >= 0.75) S.phasesTriggered.inflight = true;
+      if (nowProgress >= 0.90) S.phasesTriggered.descent = true;
+      if (nowProgress >= 0.98) S.phasesTriggered.landing = true;
+      S.prevPhase = nowProgress < 0.05 ? 'takeoff'
+                  : nowProgress < 0.75 ? 'inflight'
+                  : nowProgress < 0.90 ? 'descent'
+                  : nowProgress < 0.98 ? 'landing'
+                  : 'arrived';
+      saveS();
     });
   }
 
