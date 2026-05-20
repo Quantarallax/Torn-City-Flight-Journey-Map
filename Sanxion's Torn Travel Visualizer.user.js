@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.30.0
+// @version      70.31.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1049,7 +1049,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.30.0</p>
+    <p class="ver-t">Version 70.31.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -2696,12 +2696,12 @@ ${dots}
     const arr = (travel.timestamp || 0) * 1000;
     if (!dest || !dep || !arr) return;
     const dk = matchDest(dest), tk = matchTicket(method);
-    if (S.flying && Math.abs(S.arrTime - arr) < 10000) return;
-    if (dk && dk !== 'torn') {
-      startFlightTimes('torn', dk, tk, dep, arr, false);
-    } else if ((!dk || dk === 'torn') && S.src !== 'torn') {
-      startFlightTimes(S.src, 'torn', tk, dep, arr, true);
-    }
+    // v70.31.0: route through the shared pickup helper. Previously this
+    // branched on `S.src !== 'torn'` for return journeys, which is never
+    // true on a fresh browser session — so cross-PC returns were silently
+    // dropped. applyPickedUpFlight infers the source from duration when
+    // needed and runs phase catch-up.
+    applyPickedUpFlight(dk, tk, dep, arr);
   }
 
   /* ─────────────────────────────────────────────────────────────
@@ -2996,6 +2996,59 @@ ${dots}
     });
   }
 
+  // v70.31.0: shared catch-up helper for any code path that picks up an
+  // in-progress flight from outside this browser session (network XHR
+  // intercept, API poll, DOM scrape). Handles three things:
+  //   1. For return journeys with unknown local src, infer the source city
+  //      by matching observed flight duration against expected city-pair
+  //      durations at the given ticket method.
+  //   2. Calls startFlightTimes to set state.
+  //   3. Pre-marks phases that should have already fired so the tick loop
+  //      doesn't replay takeoff/inflight-start/halfway commentary when
+  //      picking up a flight that's already half-finished.
+  // Returns true if a flight was registered, false otherwise.
+  function applyPickedUpFlight(dk, tk, dep, arr) {
+    if (!dk || !tk || !dep || !arr) return false;
+    if (arr <= Date.now()) return false;
+    let src, dst, isReturn;
+    if (dk !== 'torn') {
+      src = 'torn'; dst = dk; isReturn = false;
+    } else {
+      // Return journey. Try locally cached src first; otherwise infer it
+      // from the flight duration vs the known city-pair durations for this
+      // ticket method.
+      let inferred = (S.src && S.src !== 'torn') ? S.src : null;
+      if (!inferred) inferred = inferReturnSourceFromDuration(arr - dep, tk);
+      if (!inferred || inferred === 'torn') return false;
+      src = inferred; dst = 'torn'; isReturn = true;
+    }
+    // v70.31.0: only bail when we're already running an identical flight.
+    // Identical = same src+dst and arr within 10s. A different flight
+    // (different src/dst or far-off arr) must overwrite stale local state.
+    if (S.flying && S.src === src && S.dst === dst && S.arrTime &&
+        Math.abs(S.arrTime - arr) < 10000) {
+      return false;
+    }
+    startFlightTimes(src, dst, tk, dep, arr, isReturn);
+    // Phase catch-up — pre-mark every earlier phase as already triggered and
+    // set prevPhase to the current phase so subsequent ticks only emit
+    // commentary for future transitions.
+    const totalMs = arr - dep;
+    const nowProgress = totalMs > 0 ? (Date.now() - dep) / totalMs : 0;
+    if (nowProgress >= 0.05) S.phasesTriggered.takeoff = true;
+    if (nowProgress >= 0.50) S.halfwayFired = true;
+    if (nowProgress >= 0.75) S.phasesTriggered.inflight = true;
+    if (nowProgress >= 0.90) S.phasesTriggered.descent = true;
+    if (nowProgress >= 0.98) S.phasesTriggered.landing = true;
+    S.prevPhase = nowProgress < 0.05 ? 'takeoff'
+                : nowProgress < 0.75 ? 'inflight'
+                : nowProgress < 0.90 ? 'descent'
+                : nowProgress < 0.98 ? 'landing'
+                : 'arrived';
+    saveS();
+    return true;
+  }
+
   // v70.30.0: when the API reports a return journey (destination = Torn) but
   // the local browser has no record of the outbound flight — typical when
   // the player started the flight on a different PC and refreshed this one
@@ -3019,6 +3072,79 @@ ${dots}
     return (bestDelta < 120000) ? best : null;
   }
 
+  // v70.31.0: scrape document.body for an in-progress flight. Used on init
+  // when no AJAX intercept fired (server-rendered page) and no API key is
+  // set. Looks for "returning to Torn"/"travelling to X" phrasing, a
+  // countdown timer (1h 23m 45s or 01:23:45), and a ticket label. Returns
+  // { dk, tk, dep, arr } suitable for applyPickedUpFlight, or null if no
+  // confident match was found.
+  function readFlightFromDOM() {
+    if (!document.body) return null;
+    const text = document.body.textContent || '';
+    if (!text) return null;
+    // Phase 1: identify destination key.
+    let dk = null;
+    if (/return(?:ing)?\s+to\s+torn|back\s+to\s+torn|travelling\s+to\s+torn|flying\s+(?:back\s+)?to\s+torn/i.test(text)) {
+      dk = 'torn';
+    } else {
+      const m = text.match(/(?:travelling|traveling|flying)\s+to\s+([A-Za-z\s]{3,40}?)(?:[.,!\n]|$)/i);
+      if (m) dk = matchDest(m[1]);
+    }
+    if (!dk) return null;
+    // Phase 2: extract remaining time. Tries h/m/s and HH:MM:SS forms.
+    let remainingMs = 0;
+    const m1 = text.match(/(\d+)\s*h(?:ours?)?\s*(\d+)\s*m(?:in(?:ute)?s?)?\s*(\d+)\s*s(?:ec(?:ond)?s?)?/i);
+    const m2 = text.match(/(\d{1,2}):(\d{2}):(\d{2})/);
+    const m3 = text.match(/(\d+)\s*m(?:in(?:ute)?s?)?\s+(\d+)\s*s(?:ec(?:ond)?s?)?/i);
+    if (m1) {
+      remainingMs = (parseInt(m1[1], 10) * 3600 + parseInt(m1[2], 10) * 60 + parseInt(m1[3], 10)) * 1000;
+    } else if (m2) {
+      remainingMs = (parseInt(m2[1], 10) * 3600 + parseInt(m2[2], 10) * 60 + parseInt(m2[3], 10)) * 1000;
+    } else if (m3) {
+      remainingMs = (parseInt(m3[1], 10) * 60 + parseInt(m3[2], 10)) * 1000;
+    }
+    if (remainingMs <= 0) return null;
+    // Phase 3: identify ticket from any label on the page.
+    let tk = S.ticket || 'standard';
+    for (const k of Object.keys(TICKETS)) {
+      const lbl = TICKETS[k].label;
+      if (lbl && new RegExp(`\\b${lbl.replace(/\s+/g, '\\s+')}\\b`, 'i').test(text)) {
+        tk = k;
+        break;
+      }
+    }
+    // Phase 4: compute dep/arr from remaining time and known total duration.
+    // For a return journey we need to know the source first. Try to spot a
+    // non-Torn city/country mentioned on the page; if nothing matches, fall
+    // through to applyPickedUpFlight which will run inferReturnSourceFromDuration.
+    let src = 'torn';
+    if (dk === 'torn') {
+      let foundSrc = null;
+      for (const [k, d] of Object.entries(DESTS)) {
+        if (k === 'torn') continue;
+        const cityRe = new RegExp(`\\b${d.city.replace(/\s+/g, '\\s+')}\\b`, 'i');
+        const countryRe = new RegExp(`\\b${d.country.replace(/\s+/g, '\\s+')}\\b`, 'i');
+        if (cityRe.test(text) || countryRe.test(text)) { foundSrc = k; break; }
+      }
+      src = foundSrc || 'torn'; // 'torn' will trigger duration-based inference downstream
+    }
+    const dur = (src !== 'torn' || dk !== 'torn') ? getDur(src === 'torn' ? 'torn' : src, dk, tk) : 0;
+    let dep, arr;
+    if (dur > 0 && remainingMs <= dur + 60000) {
+      arr = Date.now() + remainingMs;
+      dep = arr - dur;
+    } else {
+      // Couldn't compute total duration confidently — let
+      // applyPickedUpFlight's duration-match work it out from arr-dep.
+      // We synthesise an arr/dep that reflects observed remaining time at
+      // an average duration, which the inferer will round to the best match.
+      arr = Date.now() + remainingMs;
+      // Use a long sentinel — inferer matches against city pair durations.
+      dep = arr - remainingMs * 2;
+    }
+    return { dk, tk, dep, arr };
+  }
+
   function initFromApi() {
     if (!S.apiKey) return;
     apiGet(S.apiKey, (err, data) => {
@@ -3030,44 +3156,7 @@ ${dots}
       const dk = matchDest(tr.destination || '');
       const tk = matchTicket(tr.method || '');
       const dep = tr.departed * 1000, arr = tr.timestamp * 1000;
-      if (S.flying && Math.abs(S.arrTime - arr) < 10000) return;
-      if (dk && dk !== 'torn') {
-        startFlightTimes('torn', dk, tk, dep, arr, false);
-      } else {
-        // v70.30.0: return journey. Use the locally-known src if we have one
-        // (player started this flight on this browser); otherwise infer it
-        // from duration so cross-PC refreshes pick up the in-progress flight.
-        let src = S.src;
-        if (!src || src === 'torn') {
-          src = inferReturnSourceFromDuration(arr - dep, tk);
-        }
-        if (src && src !== 'torn') {
-          startFlightTimes(src, 'torn', tk, dep, arr, true);
-        } else {
-          return;
-        }
-      }
-      // v70.30.0: catch-up. startFlightTimes resets prevPhase/phasesTriggered/
-      // halfwayFired as if the flight is starting now. When initFromApi
-      // picks up a flight already in progress (a cross-PC refresh at, say,
-      // 60% completion), that reset would cause the tick loop to fire
-      // takeoff messages, the inflight-start schedule and the halfway
-      // message all over again. Pre-mark every earlier phase as already
-      // triggered, and set prevPhase to the current phase, so only future
-      // transitions emit commentary.
-      const totalMs = arr - dep;
-      const nowProgress = totalMs > 0 ? (Date.now() - dep) / totalMs : 0;
-      if (nowProgress >= 0.05) S.phasesTriggered.takeoff = true;
-      if (nowProgress >= 0.50) S.halfwayFired = true;
-      if (nowProgress >= 0.75) S.phasesTriggered.inflight = true;
-      if (nowProgress >= 0.90) S.phasesTriggered.descent = true;
-      if (nowProgress >= 0.98) S.phasesTriggered.landing = true;
-      S.prevPhase = nowProgress < 0.05 ? 'takeoff'
-                  : nowProgress < 0.75 ? 'inflight'
-                  : nowProgress < 0.90 ? 'descent'
-                  : nowProgress < 0.98 ? 'landing'
-                  : 'arrived';
-      saveS();
+      applyPickedUpFlight(dk, tk, dep, arr);
     });
   }
 
@@ -3496,6 +3585,26 @@ hr { border: none; border-top: 1px solid #1a3550; margin: 12px 0; }
     showPg(S.page || 'main');
     startLoop();
     initFromApi();
+    // v70.31.0: DOM-scrape fallback for cross-PC pickup when no API key is
+    // configured or no AJAX intercept fires (server-rendered page). Runs
+    // immediately and again after 1500ms, since Torn's page can render the
+    // flight info asynchronously after initial DOMContentLoaded.
+    const tryDOMScrape = () => {
+      const scraped = readFlightFromDOM();
+      if (scraped) {
+        applyPickedUpFlight(scraped.dk, scraped.tk, scraped.dep, scraped.arr);
+        if (S.flying && S.dst && el.svg) {
+          const vb = getZoomedViewBox(S.src, S.dst);
+          el.svg.setAttribute('viewBox', vb);
+          currentZoom = MAP_W / parseFloat(vb.split(' ')[2]);
+          drawPath(S.src, S.dst);
+          highlightDots(S.src, S.dst);
+          startFlightSampling();
+        }
+      }
+    };
+    tryDOMScrape();
+    setTimeout(tryDOMScrape, 1500);
     // v70.14.0: background faction polling for takeoff notifications.
     if (S.apiKey) startBackgroundFactionPolling();
   }
