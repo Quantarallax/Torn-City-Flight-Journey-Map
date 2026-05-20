@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.32.0
+// @version      70.33.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1049,7 +1049,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.32.0</p>
+    <p class="ver-t">Version 70.33.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -3054,19 +3054,47 @@ ${dots}
       if (!inferred || inferred === 'torn') return false;
       src = inferred; dst = 'torn'; isReturn = true;
     }
-    // v70.31.0: only bail when we're already running an identical flight.
-    // Identical = same src+dst and arr within 10s. A different flight
-    // (different src/dst or far-off arr) must overwrite stale local state.
+    // v70.31.0/v70.33.0: dedup. Same src+dst with arr within 10s means a
+    // matching flight is already running. v70.33.0 refines this: when the
+    // new caller has a more accurate ticket type than what's currently
+    // stored (e.g. faction-sync registered the flight with hardcoded
+    // 'standard' and now initFromApi is reporting the real method from
+    // the user-API endpoint), update S.ticket and S.depTime in-place and
+    // rebuild the phase catch-up. Avoids fully resetting the flight (which
+    // would clear the in-flight commentary schedule etc.).
     if (S.flying && S.src === src && S.dst === dst && S.arrTime &&
         Math.abs(S.arrTime - arr) < 10000) {
+      if (tk && tk !== S.ticket) {
+        S.ticket = tk;
+        S.depTime = dep;
+        S.arrTime = arr;
+        if (el.tkt) el.tkt.textContent = TICKETS[tk]?.label || tk;
+        // Rebuild phase catch-up against the corrected dep/arr. The
+        // previous catch-up was based on a wrong dep (computed from the
+        // standard-ticket duration in the faction parse), so its
+        // phasesTriggered flags reflected a position further along the
+        // flight than actually reached.
+        S.phasesTriggered = {};
+        S.halfwayFired = false;
+        applyFlightCatchUp(dep, arr);
+        saveS();
+      }
       return false;
     }
     startFlightTimes(src, dst, tk, dep, arr, isReturn);
-    // Phase catch-up — pre-mark every earlier phase as already triggered and
-    // set prevPhase to the current phase so subsequent ticks only emit
-    // commentary for future transitions.
+    applyFlightCatchUp(dep, arr);
+    saveS();
+    return true;
+  }
+
+  // v70.33.0: pre-mark every earlier phase as already triggered and set
+  // prevPhase to the current phase, so subsequent ticks only emit
+  // commentary for future transitions. Extracted from applyPickedUpFlight
+  // so the dedup-refine branch can also use it after correcting dep/arr.
+  function applyFlightCatchUp(dep, arr) {
     const totalMs = arr - dep;
     const nowProgress = totalMs > 0 ? (Date.now() - dep) / totalMs : 0;
+    if (!S.phasesTriggered) S.phasesTriggered = {};
     if (nowProgress >= 0.05) S.phasesTriggered.takeoff = true;
     if (nowProgress >= 0.50) S.halfwayFired = true;
     if (nowProgress >= 0.75) S.phasesTriggered.inflight = true;
@@ -3077,8 +3105,6 @@ ${dots}
                 : nowProgress < 0.90 ? 'descent'
                 : nowProgress < 0.98 ? 'landing'
                 : 'arrived';
-    saveS();
-    return true;
   }
 
   // v70.30.0: when the API reports a return journey (destination = Torn) but
