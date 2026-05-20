@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.31.0
+// @version      70.32.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1049,7 +1049,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.31.0</p>
+    <p class="ver-t">Version 70.32.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -2205,6 +2205,37 @@ ${dots}
               };
             }
           }
+          // v70.32.0: cross-PC flight sync. The faction API parse above has
+          // already extracted the player's own current flight from their
+          // member status description (e.g. "traveling from China to Torn
+          // City"), with both src AND dst correctly identified — that's why
+          // the Faction Flyer screen has always shown the right route even
+          // when the Flight View was stuck on a stale country. Push that
+          // canonical flight info back into S so Flight View also updates.
+          // This kicks in whenever the API-derived flight differs from local
+          // state (different src/dst, or arrTime more than 10s apart), which
+          // is exactly the "flight initiated on PC1, refreshed on PC2"
+          // scenario.
+          if (S.player) {
+            for (const [memberId, m] of Object.entries(factionData)) {
+              if (memberId === 'self_player') continue;
+              if (m.name !== S.player) continue;
+              if (!m.src || !m.dst || !m.depTime || !m.arrTime) continue;
+              const playerTk = matchFactionTicket(m.method) || 'standard';
+              const synced = applyPickedUpFlight(m.dst, playerTk, m.depTime, m.arrTime, m.src);
+              if (synced && S.flying && S.dst && el.svg) {
+                // Match the visual refresh that init() does when picking up
+                // a flight, so Flight View immediately shows the new path.
+                const vb = getZoomedViewBox(S.src, S.dst);
+                el.svg.setAttribute('viewBox', vb);
+                currentZoom = MAP_W / parseFloat(vb.split(' ')[2]);
+                drawPath(S.src, S.dst);
+                highlightDots(S.src, S.dst);
+                startFlightSampling();
+              }
+              break;
+            }
+          }
           // v70.14.0: detect new takeoffs (members flying now who weren't
           // flying on the previous poll). Skip the first ever poll so we
           // don't notify for members who were already in the air on load.
@@ -3007,17 +3038,18 @@ ${dots}
   //      doesn't replay takeoff/inflight-start/halfway commentary when
   //      picking up a flight that's already half-finished.
   // Returns true if a flight was registered, false otherwise.
-  function applyPickedUpFlight(dk, tk, dep, arr) {
+  function applyPickedUpFlight(dk, tk, dep, arr, knownSrc) {
     if (!dk || !tk || !dep || !arr) return false;
     if (arr <= Date.now()) return false;
     let src, dst, isReturn;
     if (dk !== 'torn') {
       src = 'torn'; dst = dk; isReturn = false;
     } else {
-      // Return journey. Try locally cached src first; otherwise infer it
-      // from the flight duration vs the known city-pair durations for this
-      // ticket method.
-      let inferred = (S.src && S.src !== 'torn') ? S.src : null;
+      // Return journey. Priority: explicit knownSrc (faction-API parse
+      // already gave us a definite source), then locally cached src,
+      // then duration-based inference as a last resort.
+      let inferred = (knownSrc && knownSrc !== 'torn') ? knownSrc : null;
+      if (!inferred) inferred = (S.src && S.src !== 'torn') ? S.src : null;
       if (!inferred) inferred = inferReturnSourceFromDuration(arr - dep, tk);
       if (!inferred || inferred === 'torn') return false;
       src = inferred; dst = 'torn'; isReturn = true;
