@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.35.0
+// @version      70.36.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -108,53 +108,37 @@
     () => 'A jet flies past upside down — turbulence rocks the plane.',
   ];
   const INFLIGHT_RANDOM_SMALL = [
-    // v70.35.0: pool aligned with new spec — fixed-start messages
-    // ("Levelling off..." and "A jet flys past, upside down.") live in
-    // INFLIGHT_FIXED_START_SMALL above; this is the random pool that's
-    // sampled between them. Removed messages that the new spec no longer
-    // lists for small planes ("WARNING: Flight proximity alert!", "ATC
-    // stand by, unsure of error reason.", "The engine hums steadily.",
-    // "does a loop the loop, here we go!") and added the three new ones.
-    () => `ATC, this is flight ${rndFlightNum()}, autopilot engaged.`,
     () => 'Up here, the sun shines brightly.',
-    () => 'Switching to 442.2.',
-    p => `${p.name} checks the route.`,
-    p => `${p.name} contemplates doing a loop-the-loop.`,
+    () => 'The engine hums steadily.',
+    () => 'WARNING: Flight proximity alert!',
+    () => 'ATC stand by, unsure of error reason.',
+    p => `${p.name} does a loop the loop, here we go!`,
     () => 'A jet flies past — turbulence rocks the plane.',
+    () => `ATC, this is flight ${rndFlightNum()}, autopilot engaged.`,
   ];
 
   const isSmallPlane = () => TICKETS[S.ticket]?.size === 'small';
 
   const COMMENTARY = {
-    // v70.35.0: per spec the "Landed at Source" phase is now a placeholder
-    // — the messages that used to live here have been moved into the
-    // takeoff arrays. Empty arrays so getComm('ready') returns nothing and
-    // triggerComm fires with no log output.
-    ready_large: [],
-    ready_small: [],
-    takeoff_large: [
-      // v70.35.0: full takeoff sequence per new spec. The first three
-      // messages were previously in ready_large; the order has been
-      // rearranged so the inflated picks-up-speed and aircraft-leaves-ground
-      // moments sit between the formal ATC chatter and the cabin announcements.
+    ready_large: [
       () => 'Tower, pre-flight checks complete.',
       p => `Flight requesting clearance for take-off from ${p.src} Airport.`,
-      () => 'The airplane picks up speed.',
       () => 'Ladies and gentlemen, we are ready for take off.',
+    ],
+    ready_small: [
+      p => `${p.name} requesting clearance for take-off from ${p.src} Airport.`,
+      p => `Preflight checks confirmed. ${p.name}.`,
+      () => 'Ready for instructions.',
+    ],
+    takeoff_large: [
       () => 'Cabin crew, cross-check ready for departure.',
-      () => 'The airplane leaves the ground.',
       p => `Welcome to your flight to ${p.dst}. Extinguish all doobies and put seats in upright position.`,
+      () => 'The airplane picks up speed.',
+      () => 'The airplane leaves the ground.',
       () => 'Sit back and relax.',
       p => `Climbing to ${p.maxAlt.toLocaleString()} feet.`,
     ],
     takeoff_small: [
-      // v70.35.0: prepended with the old ready_small messages so the
-      // pre-flight clearance chatter happens at takeoff. Note "Preflight
-      // checks confirmed." no longer has the player name appended, and
-      // "Ready for instructions" gains a trailing period — both per spec.
-      p => `${p.name} requesting clearance for take-off from ${p.src} Airport.`,
-      () => 'Preflight checks confirmed.',
-      () => 'Ready for instructions.',
       p => `ATC: ${p.name}, you are cleared for take-off. Runway 1C. Proceed.`,
       () => 'Tower, increasing speed, throttle engaged.',
       p => `Climbing to ${p.maxAlt.toLocaleString()} feet.`,
@@ -611,29 +595,6 @@ ${dots}
   }
 
   let el = {};
-  // v70.35.0: when status is READY, flash between READY and LANDED per
-  // spec: 3s READY → 0.5s blank → 3s LANDED → 0.5s blank → repeat. Driven
-  // by a 250ms timer because the main tick loop only fires once per second
-  // — not fine-grained enough to render the 0.5s blank windows. The flash
-  // is anchored to Date.now() % 7000 so multiple visits to the page show
-  // the same global cadence rather than restarting each time.
-  let readyFlashTimer = null;
-  function startReadyFlash() {
-    if (readyFlashTimer || !el.status) return;
-    const paint = () => {
-      if (!el.status) return;
-      const cycle = Date.now() % 7000;
-      if (cycle < 3000) el.status.textContent = 'READY';
-      else if (cycle < 3500) el.status.textContent = '';
-      else if (cycle < 6500) el.status.textContent = 'LANDED';
-      else el.status.textContent = '';
-    };
-    paint();
-    readyFlashTimer = setInterval(paint, 250);
-  }
-  function stopReadyFlash() {
-    if (readyFlashTimer) { clearInterval(readyFlashTimer); readyFlashTimer = null; }
-  }
 
   function updateStats(progress, timeLeftMs) {
     if (!el.status) return;
@@ -650,15 +611,7 @@ ${dots}
       distRem = totalDist;
     }
     const ph = PHASE_CFG[phase] || PHASE_CFG.ready;
-    // v70.35.0: while in the ready phase the flash timer owns el.status's
-    // text. updateStats still updates the colour each tick so re-renders
-    // pick it up correctly.
-    if (phase === 'ready') {
-      startReadyFlash();
-    } else {
-      stopReadyFlash();
-      el.status.textContent = ph.label;
-    }
+    el.status.textContent = ph.label;
     el.status.style.color = ph.col;
     el.destname.textContent = dst ? `${dst.city}, ${dst.country}` : '—';
     el.dist.textContent = totalDist > 0 ? `${distRem.toLocaleString()} mi` : '— mi';
@@ -704,17 +657,13 @@ ${dots}
     const msgs = getComm(phase, params.isSmall);
     if (!msgs || !msgs.length) return;
     const rid = (phRunId[phase] = (phRunId[phase] || 0) + 1);
-    // v70.35.0: takeoff sequences now use 5-second spacing between messages
-    // per spec ("five seconds between each message"). Other phases keep the
-    // original 3.8s pacing.
-    const step = phase === 'takeoff' ? 5000 : 3800;
     msgs.forEach((fn, i) => {
       setTimeout(() => {
         if (phRunId[phase] === rid) {
           const msg = fn(params);
           if (msg) addLog(msg);
         }
-      }, i * step);
+      }, i * 3800);
     });
   }
 
@@ -800,7 +749,7 @@ ${dots}
         saveS();
       }
       if (el.status) {
-        stopReadyFlash(); el.status.textContent = PHASE_CFG.inaccessible.label;
+        el.status.textContent = PHASE_CFG.inaccessible.label;
         el.status.style.color = PHASE_CFG.inaccessible.col;
       }
       loopTmr = setTimeout(tick, 1000);
@@ -827,7 +776,7 @@ ${dots}
         saveS();
       }
       if (el.status) {
-        stopReadyFlash(); el.status.textContent = PHASE_CFG.airport_closed.label;
+        el.status.textContent = PHASE_CFG.airport_closed.label;
         el.status.style.color = PHASE_CFG.airport_closed.col;
       }
       loopTmr = setTimeout(tick, 1000);
@@ -842,7 +791,7 @@ ${dots}
         saveS();
       } else {
         if (el.status) {
-          stopReadyFlash(); el.status.textContent = PHASE_CFG.airport_closed.label;
+          el.status.textContent = PHASE_CFG.airport_closed.label;
           el.status.style.color = PHASE_CFG.airport_closed.col;
         }
         loopTmr = setTimeout(tick, 1000);
@@ -864,7 +813,7 @@ ${dots}
         saveS();
       }
       if (el.status) {
-        stopReadyFlash(); el.status.textContent = PHASE_CFG.state_of_emergency.label;
+        el.status.textContent = PHASE_CFG.state_of_emergency.label;
         el.status.style.color = PHASE_CFG.state_of_emergency.col;
       }
       loopTmr = setTimeout(tick, 1000);
@@ -890,7 +839,7 @@ ${dots}
         saveS();
       }
       if (el.status) {
-        stopReadyFlash(); el.status.textContent = PHASE_CFG.terror_threat.label;
+        el.status.textContent = PHASE_CFG.terror_threat.label;
         el.status.style.color = PHASE_CFG.terror_threat.col;
       }
       loopTmr = setTimeout(tick, 1000);
@@ -1100,7 +1049,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.35.0</p>
+    <p class="ver-t">Version 70.36.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -2256,36 +2205,6 @@ ${dots}
               };
             }
           }
-          // v70.35.0: Flight View was sometimes showing stale data (old
-          // destination from a previous flight, or nothing at all) while the
-          // Faction Flyer screen had the correct route. Per spec, fix this
-          // by syncing the player's own entry from factionData into S.
-          // Only the FLIGHT PATH (src, dst, dep, arr) is read from faction
-          // data — m.method is hardcoded 'Standard' in the parse above, so
-          // we pass the locally cached S.ticket as a placeholder. When
-          // initFromApi later returns with the authoritative ticket from
-          // /user/?selections=travel, the dedup-refine branch in
-          // applyPickedUpFlight updates S.ticket in place.
-          if (S.player) {
-            for (const [mid, m] of Object.entries(factionData)) {
-              if (mid === 'self_player') continue;
-              if (m.name !== S.player) continue;
-              if (!m.src || !m.dst || !m.depTime || !m.arrTime) continue;
-              const localTk = S.ticket || 'standard';
-              const synced = applyPickedUpFlight(m.dst, localTk, m.depTime, m.arrTime, m.src);
-              if (synced && S.flying && S.dst && el.svg) {
-                // Newly registered flight — refresh Flight View visuals so
-                // the path/plane/dots reflect the new src/dst immediately.
-                const vb = getZoomedViewBox(S.src, S.dst);
-                el.svg.setAttribute('viewBox', vb);
-                currentZoom = MAP_W / parseFloat(vb.split(' ')[2]);
-                drawPath(S.src, S.dst);
-                highlightDots(S.src, S.dst);
-                startFlightSampling();
-              }
-              break;
-            }
-          }
           // v70.14.0: detect new takeoffs (members flying now who weren't
           // flying on the previous poll). Skip the first ever poll so we
           // don't notify for members who were already in the air on load.
@@ -2767,90 +2686,6 @@ ${dots}
     };
   }
 
-  // v70.35.0: shared cross-PC flight-pickup helper. Used by every code
-  // path that can detect an in-progress flight without going through the
-  // user's own UI: handleNetResponse (Torn AJAX intercept), initFromApi
-  // (user-API poll) and the faction-API sync that runs at the end of
-  // fetchFactionFlights. Three responsibilities:
-  //   1. For return journeys with no locally-known source, infer it. Order
-  //      of trust: explicit knownSrc (faction-API status text gives us a
-  //      definite source) > locally cached S.src > duration-based match
-  //      against expected city-pair durations for this ticket method.
-  //   2. Register the flight via startFlightTimes if not already running.
-  //   3. Mark earlier phases as already-triggered so a mid-flight pickup at
-  //      e.g. 60% progress doesn't replay takeoff or halfway commentary.
-  // Returns true if a flight was newly registered, false otherwise.
-  function applyPickedUpFlight(dk, tk, dep, arr, knownSrc) {
-    if (!dk || !tk || !dep || !arr) return false;
-    if (arr <= Date.now()) return false;
-    let src, dst, isReturn;
-    if (dk !== 'torn') {
-      src = 'torn'; dst = dk; isReturn = false;
-    } else {
-      let inferred = (knownSrc && knownSrc !== 'torn') ? knownSrc : null;
-      if (!inferred) inferred = (S.src && S.src !== 'torn') ? S.src : null;
-      if (!inferred) inferred = inferReturnSourceFromDuration(arr - dep, tk);
-      if (!inferred || inferred === 'torn') return false;
-      src = inferred; dst = 'torn'; isReturn = true;
-    }
-    // Dedup: same src+dst+arr means a matching flight is already running.
-    // If the caller has a different ticket, treat that as authoritative
-    // refinement — update S.ticket/depTime/arrTime in place and rebuild
-    // phase catch-up. This is critical for the race where faction-sync
-    // registers the flight first with a placeholder ticket and initFromApi
-    // later returns with the real method from /user/?selections=travel.
-    if (S.flying && S.src === src && S.dst === dst && S.arrTime &&
-        Math.abs(S.arrTime - arr) < 10000) {
-      if (tk && tk !== S.ticket) {
-        S.ticket = tk;
-        S.depTime = dep;
-        S.arrTime = arr;
-        if (el.tkt) el.tkt.textContent = TICKETS[tk]?.label || tk;
-        S.phasesTriggered = {};
-        S.halfwayFired = false;
-        applyFlightCatchUp(dep, arr);
-        saveS();
-      }
-      return false;
-    }
-    startFlightTimes(src, dst, tk, dep, arr, isReturn);
-    applyFlightCatchUp(dep, arr);
-    saveS();
-    return true;
-  }
-
-  function applyFlightCatchUp(dep, arr) {
-    const totalMs = arr - dep;
-    const nowProgress = totalMs > 0 ? (Date.now() - dep) / totalMs : 0;
-    if (!S.phasesTriggered) S.phasesTriggered = {};
-    if (nowProgress >= 0.05) S.phasesTriggered.takeoff = true;
-    if (nowProgress >= 0.50) S.halfwayFired = true;
-    if (nowProgress >= 0.75) S.phasesTriggered.inflight = true;
-    if (nowProgress >= 0.90) S.phasesTriggered.descent = true;
-    if (nowProgress >= 0.98) S.phasesTriggered.landing = true;
-    S.prevPhase = nowProgress < 0.05 ? 'takeoff'
-                : nowProgress < 0.75 ? 'inflight'
-                : nowProgress < 0.90 ? 'descent'
-                : nowProgress < 0.98 ? 'landing'
-                : 'arrived';
-  }
-
-  function inferReturnSourceFromDuration(durMs, tk) {
-    if (!durMs || durMs <= 0) return null;
-    let best = null;
-    let bestDelta = Infinity;
-    for (const key of Object.keys(DESTS)) {
-      if (key === 'torn') continue;
-      const expected = getDur(key, 'torn', tk);
-      const delta = Math.abs(expected - durMs);
-      if (delta < bestDelta) {
-        bestDelta = delta;
-        best = key;
-      }
-    }
-    return (bestDelta < 120000) ? best : null;
-  }
-
   function handleNetResponse(url, data) {
     if (!data) return;
     const travel = data.travel || data.travelling || null;
@@ -2861,7 +2696,12 @@ ${dots}
     const arr = (travel.timestamp || 0) * 1000;
     if (!dest || !dep || !arr) return;
     const dk = matchDest(dest), tk = matchTicket(method);
-    applyPickedUpFlight(dk, tk, dep, arr);
+    if (S.flying && Math.abs(S.arrTime - arr) < 10000) return;
+    if (dk && dk !== 'torn') {
+      startFlightTimes('torn', dk, tk, dep, arr, false);
+    } else if ((!dk || dk === 'torn') && S.src !== 'torn') {
+      startFlightTimes(S.src, 'torn', tk, dep, arr, true);
+    }
   }
 
   /* ─────────────────────────────────────────────────────────────
@@ -3167,7 +3007,12 @@ ${dots}
       const dk = matchDest(tr.destination || '');
       const tk = matchTicket(tr.method || '');
       const dep = tr.departed * 1000, arr = tr.timestamp * 1000;
-      applyPickedUpFlight(dk, tk, dep, arr);
+      if (S.flying && Math.abs(S.arrTime - arr) < 10000) return;
+      if (dk && dk !== 'torn') {
+        startFlightTimes('torn', dk, tk, dep, arr, false);
+      } else if (S.src !== 'torn') {
+        startFlightTimes(S.src, 'torn', tk, dep, arr, true);
+      }
     });
   }
 
