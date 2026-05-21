@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.38.0
+// @version      70.39.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -624,10 +624,14 @@ ${dots}
     const paint = () => {
       if (!el.status) return;
       const cycle = Date.now() % 7000;
+      // v70.39.0: use a non-breaking space (\u00A0) for the 0.5s blank
+      // windows rather than an empty string. An empty string collapses
+      // the element's height so the surrounding panel shifts up; the
+      // NBSP keeps the same line height as the READY/LANDED text.
       if (cycle < 3000) el.status.textContent = 'READY';
-      else if (cycle < 3500) el.status.textContent = '';
+      else if (cycle < 3500) el.status.textContent = '\u00A0';
       else if (cycle < 6500) el.status.textContent = 'LANDED';
-      else el.status.textContent = '';
+      else el.status.textContent = '\u00A0';
     };
     paint();
     readyFlashTimer = setInterval(paint, 250);
@@ -1099,7 +1103,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.38.0</p>
+    <p class="ver-t">Version 70.39.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1818,7 +1822,11 @@ ${dots}
       if (isLanded) {
         col = greyCol;
         label = 'MAINTENANCE';
-        detail = (s.id === 'gear') ? 'LOWERED' : 'SHUTDOWN';
+        // v70.39.0: gear detail says DEPLOYED when on the ground (parked /
+        // closed airport / etc.) — previously 'LOWERED'. The plane's gear
+        // is physically deployed when the aircraft is sitting at a gate,
+        // and the spec now uses 'DEPLOYED' consistently.
+        detail = (s.id === 'gear') ? 'DEPLOYED' : 'SHUTDOWN';
       } else {
         col = DIAG_STATUS_COLS[s.status];
         label = s.status.toUpperCase();
