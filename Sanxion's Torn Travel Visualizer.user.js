@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.39.0
+// @version      70.40.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -159,6 +159,13 @@
       p => `ATC: ${p.name}, you are cleared for take-off. Runway 1C. Proceed.`,
       () => 'Tower, increasing speed, throttle engaged.',
       p => `Climbing to ${p.maxAlt.toLocaleString()} feet.`,
+      // v70.40.0: small-plane takeoff also notes any faction members on
+      // the same flight path (either direction). Returns null when none
+      // are flying the route, in which case triggerComm filters this out
+      // — so the message only appears when there's actually someone to
+      // mention. Grammar: "X is..." for one member, "X and Y are..." /
+      // "X, Y and Z are..." for two or more.
+      p => formatFactionOnPathLine(p.factionOnPath),
     ],
     turbulence: [
       () => 'Slight turbulence — nothing to worry about.',
@@ -931,6 +938,11 @@ ${dots}
       arrivalTime,
       isTornCity: S.dst === 'torn',
       isSmall: TICKETS[S.ticket]?.size === 'small',
+      // v70.40.0: list of faction member names on the same flight path
+      // (either direction). Used by the small-plane takeoff "Flight
+      // logged" message. Skips the player themselves and the 'self_player'
+      // sentinel.
+      factionOnPath: factionMembersOnPlayerPath(),
     };
     if (phase !== S.prevPhase) {
       S.prevPhase = phase;
@@ -1103,7 +1115,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.39.0</p>
+    <p class="ver-t">Version 70.40.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1990,6 +2002,41 @@ ${dots}
     if (backgroundFactionTimer) { clearInterval(backgroundFactionTimer); backgroundFactionTimer = null; }
   }
 
+  // v70.40.0: returns the list of faction-member names currently flying
+  // the same route as the player (in either direction). Used to build the
+  // small-plane takeoff "Flight logged. X is on the same flight path.
+  // Noted." message. Skips the self_player sentinel and any entry whose
+  // name matches the player's (the API can list the player under their
+  // real user id, not just the sentinel).
+  function factionMembersOnPlayerPath() {
+    if (!S.src || !S.dst) return [];
+    const out = [];
+    for (const id of Object.keys(factionData)) {
+      if (id === 'self_player') continue;
+      const m = factionData[id];
+      if (!m || !m.src || !m.dst || !m.name) continue;
+      if (S.player && m.name === S.player) continue;
+      const same = (m.src === S.src && m.dst === S.dst);
+      const opp = (m.src === S.dst && m.dst === S.src);
+      if (same || opp) out.push(m.name);
+    }
+    return out;
+  }
+
+  // v70.40.0: format an array of names as a natural-language list with
+  // grammatical concord — "X" / "X and Y" / "X, Y and Z" — and pair with
+  // singular/plural verb. Empty array yields null so the template can
+  // skip emitting any message.
+  function formatFactionOnPathLine(names) {
+    if (!names || !names.length) return null;
+    let list;
+    if (names.length === 1) list = names[0];
+    else if (names.length === 2) list = `${names[0]} and ${names[1]}`;
+    else list = `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+    const verb = names.length === 1 ? 'is' : 'are';
+    return `Flight logged. ${list} ${verb} on the same flight path. Noted.`;
+  }
+
   function matchFactionTicket(method) {
     if (!method) return 'standard';
     const m = method.toLowerCase();
@@ -2744,6 +2791,29 @@ ${dots}
     };
   }
 
+  // v70.40.0: when the network/API reports a return journey (destination =
+  // Torn) but the local browser has no record of the outbound flight —
+  // typical when the player started the flight on a different PC and
+  // refreshed this one — infer the source city by matching observed
+  // flight duration against expected durations for every city-pair at the
+  // same ticket method. Returns the best-matching city key, or null if no
+  // match is within ±2 minutes.
+  function inferReturnSourceFromDuration(durMs, tk) {
+    if (!durMs || durMs <= 0) return null;
+    let best = null;
+    let bestDelta = Infinity;
+    for (const key of Object.keys(DESTS)) {
+      if (key === 'torn') continue;
+      const expected = getDur(key, 'torn', tk);
+      const delta = Math.abs(expected - durMs);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        best = key;
+      }
+    }
+    return (bestDelta < 120000) ? best : null;
+  }
+
   function handleNetResponse(url, data) {
     if (!data) return;
     const travel = data.travel || data.travelling || null;
@@ -2757,8 +2827,18 @@ ${dots}
     if (S.flying && Math.abs(S.arrTime - arr) < 10000) return;
     if (dk && dk !== 'torn') {
       startFlightTimes('torn', dk, tk, dep, arr, false);
-    } else if ((!dk || dk === 'torn') && S.src !== 'torn') {
-      startFlightTimes(S.src, 'torn', tk, dep, arr, true);
+    } else if (!dk || dk === 'torn') {
+      // v70.40.0: return journey. Was previously gated on `S.src !== 'torn'`
+      // which fails on a fresh browser session where S.src defaults to 'torn'
+      // (e.g. PC2 refresh of a flight initiated on PC1). Infer the source
+      // by matching observed flight duration against known city-pair
+      // durations for this ticket method. Fall back to locally-cached
+      // S.src if duration inference can't find a match.
+      let src = inferReturnSourceFromDuration(arr - dep, tk);
+      if (!src && S.src && S.src !== 'torn') src = S.src;
+      if (src && src !== 'torn') {
+        startFlightTimes(src, 'torn', tk, dep, arr, true);
+      }
     }
   }
 
@@ -3068,8 +3148,15 @@ ${dots}
       if (S.flying && Math.abs(S.arrTime - arr) < 10000) return;
       if (dk && dk !== 'torn') {
         startFlightTimes('torn', dk, tk, dep, arr, false);
-      } else if (S.src !== 'torn') {
-        startFlightTimes(S.src, 'torn', tk, dep, arr, true);
+      } else {
+        // v70.40.0: return-journey branch now infers source by duration so
+        // a fresh PC2 (where S.src defaults to 'torn') can still pick up
+        // an in-progress return flight initiated on another browser.
+        let src = inferReturnSourceFromDuration(arr - dep, tk);
+        if (!src && S.src && S.src !== 'torn') src = S.src;
+        if (src && src !== 'torn') {
+          startFlightTimes(src, 'torn', tk, dep, arr, true);
+        }
       }
     });
   }
