@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.44.0
+// @version      70.45.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1117,7 +1117,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.44.0</p>
+    <p class="ver-t">Version 70.45.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -2993,6 +2993,15 @@ ${dots}
             }
           }
         }
+        // v70.45.0: also run the cross-PC pickup on every DOM mutation.
+        // Torn's React app renders the "X to Torn" heading and countdown
+        // some time after initial page load; the faction-poll-driven
+        // call to pickUpFromPage might fire before that text exists in
+        // the DOM (resulting in a no-op then a 60s wait). Driving it from
+        // the MutationObserver means each render pass that adds the
+        // relevant text triggers another pickup attempt. Dedup inside
+        // pickUpFromPage keeps repeated calls cheap and idempotent.
+        pickUpFromPage();
       }, 500);
     });
     obs.observe(document.body, { childList:true, subtree:true, characterData:true, attributes:true, attributeFilter:['class'] });
