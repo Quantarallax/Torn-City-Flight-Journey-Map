@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.41.0
+// @version      70.43.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -159,12 +159,14 @@
       p => `ATC: ${p.name}, you are cleared for take-off. Runway 1C. Proceed.`,
       () => 'Tower, increasing speed, throttle engaged.',
       p => `Climbing to ${p.maxAlt.toLocaleString()} feet.`,
-      // v70.40.0/v70.41.0: small-plane takeoff also notes any faction
-      // members on the same flight path (either direction). Reads
-      // factionData *live* at the moment this template fires (not at the
-      // moment triggerComm captures params) so the message gets the most
-      // recent faction-API data. Returns null when no members match, in
-      // which case triggerComm filters this out.
+      // v70.43.0: small-plane takeoff notes any faction members on the
+      // same flight path. Reads factionData *live* at the moment this
+      // template fires (not when triggerComm captures params) so the
+      // message gets the most recent faction-API data. On a fresh page
+      // load the faction API is async and factionData is usually empty
+      // at the moment takeoff begins; by reading live, the last template
+      // (fires ~30s in) sees the populated factionData. Returns null if
+      // no members match, which triggerComm filters out.
       () => formatFactionOnPathLine(factionMembersOnPlayerPath()),
     ],
     turbulence: [
@@ -1115,7 +1117,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.41.0</p>
+    <p class="ver-t">Version 70.43.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -2310,54 +2312,6 @@ ${dots}
               };
             }
           }
-          // v70.41.0: cross-PC flight sync. The user-API path
-          // (initFromApi/handleNetResponse) isn't reliably picking up
-          // return-flight state on a fresh browser session, but the
-          // faction-API parse above already extracts the player's own
-          // src/dst/dep/arr from their member status description (e.g.
-          // "Traveling from China to Torn City") — and that's the same
-          // data the Faction Flights screen renders correctly. Push it
-          // into S so the Flight View matches. Per spec, only the FLIGHT
-          // PATH is taken from faction data — ticket stays as S.ticket
-          // (m.method is hardcoded 'Standard' in the parser, so it'd be
-          // wrong for any non-standard flight).
-          if (S.player) {
-            for (const id of Object.keys(factionData)) {
-              if (id === 'self_player') continue;
-              const m = factionData[id];
-              if (!m || m.name !== S.player) continue;
-              if (!m.src || !m.dst || !m.depTime || !m.arrTime) continue;
-              // Dedup: skip when a matching flight is already running.
-              // "Matching" = same src, same dst, arr within 30s.
-              const matching = S.flying && S.src === m.src && S.dst === m.dst &&
-                               S.arrTime && Math.abs(S.arrTime - m.arrTime) < 30000;
-              if (matching) break;
-              // Don't pick up if the flight has already ended.
-              if (m.arrTime <= Date.now()) break;
-              const tk = S.ticket || 'standard';
-              const isReturn = (m.dst === 'torn');
-              startFlightTimes(m.src, m.dst, tk, m.depTime, m.arrTime, isReturn);
-              // Catch up so we don't replay halfway commentary on a
-              // mid-flight pickup that's already past 50%.
-              const totalMs = m.arrTime - m.depTime;
-              if (totalMs > 0 && (Date.now() - m.depTime) / totalMs >= 0.5) {
-                S.halfwayFired = true;
-              }
-              // Refresh Flight View visuals immediately so the path,
-              // plane and dots reflect the corrected route without
-              // waiting for the next tick.
-              if (S.flying && S.dst && el.svg) {
-                const vb = getZoomedViewBox(S.src, S.dst);
-                el.svg.setAttribute('viewBox', vb);
-                currentZoom = MAP_W / parseFloat(vb.split(' ')[2]);
-                drawPath(S.src, S.dst);
-                highlightDots(S.src, S.dst);
-                startFlightSampling();
-              }
-              saveS();
-              break;
-            }
-          }
           // v70.14.0: detect new takeoffs (members flying now who weren't
           // flying on the previous poll). Skip the first ever poll so we
           // don't notify for members who were already in the air on load.
@@ -2406,6 +2360,11 @@ ${dots}
             zoomToFitFaction();
             renderFactionRoster();
           }
+          // v70.43.0: cross-PC pickup runs here because both the page DOM
+          // and the freshly-populated factionData are available. The
+          // helper bails fast if there's no in-progress flight or if
+          // S already matches.
+          pickUpFromPage();
         } catch(e) {
           if (el.log && factionFlightsOn) {
             el.log.innerHTML = '<div class="tl tln" style="color:#f88">Faction parse error — check api key</div>';
@@ -2860,6 +2819,101 @@ ${dots}
       }
     }
     return (bestDelta < 120000) ? best : null;
+  }
+
+  // v70.43.0: cross-PC flight pickup driven primarily by the Torn page
+  // DOM, with the non-Torn city of the route taken from factionData per
+  // spec ("Use screen for everything apart from destination, which you
+  // can get from the faction flyer screen"). The faction parser already
+  // extracts src/dst correctly from each member's status description, so
+  // the player's own factionData entry is a reliable source of the
+  // destination city — which the page DOM doesn't reveal for return
+  // flights ("Returning to Torn City" doesn't say which city you're
+  // returning from). Timing (remaining time) and ticket come from the
+  // page. Called from fetchFactionFlights's success path so both data
+  // sources are ready.
+  function pickUpFromPage() {
+    if (!document.body) return;
+    const body = document.body.textContent || '';
+    // Direction.
+    let isReturn = false;
+    let outboundMatch = null;
+    if (/return(?:ing)?\s+to\s+torn/i.test(body)) {
+      isReturn = true;
+    } else {
+      outboundMatch = body.match(/(?:travelling|traveling|flying)\s+to\s+([A-Za-z\s]{3,30})(?:[.,\n]|$)/i);
+      if (!outboundMatch) return;
+    }
+    // Non-Torn city from factionData (player's own entry).
+    let nonTornCity = null;
+    if (S.player) {
+      for (const id of Object.keys(factionData)) {
+        if (id === 'self_player') continue;
+        const m = factionData[id];
+        if (!m || m.name !== S.player) continue;
+        if (isReturn && m.dst === 'torn' && m.src && m.src !== 'torn') {
+          nonTornCity = m.src;
+        } else if (!isReturn && m.src === 'torn' && m.dst && m.dst !== 'torn') {
+          nonTornCity = m.dst;
+        }
+        break;
+      }
+    }
+    // Fallback for outbound: use the destination name parsed from page
+    // text. (Return flights have no DOM-visible source name, so they
+    // require factionData; no fallback there.)
+    if (!nonTornCity && !isReturn && outboundMatch) {
+      nonTornCity = matchDest(outboundMatch[1]);
+    }
+    if (!nonTornCity || nonTornCity === 'torn') return;
+    // Remaining time. Several formats appear in Torn's UI; try each.
+    let remainingMs = 0;
+    const hmsHM = body.match(/(\d+)\s*h(?:ours?)?\s*(\d+)\s*m(?:in(?:ute)?s?)?/i);
+    const colon = body.match(/\b(\d{1,2}):(\d{2}):(\d{2})\b/);
+    const msMS = body.match(/(\d+)\s*m(?:in(?:ute)?s?)?\s*(\d+)\s*s(?:ec(?:ond)?s?)?/i);
+    if (hmsHM) {
+      remainingMs = (parseInt(hmsHM[1], 10) * 3600 + parseInt(hmsHM[2], 10) * 60) * 1000;
+    } else if (colon) {
+      remainingMs = (parseInt(colon[1], 10) * 3600 + parseInt(colon[2], 10) * 60 + parseInt(colon[3], 10)) * 1000;
+    } else if (msMS) {
+      remainingMs = (parseInt(msMS[1], 10) * 60 + parseInt(msMS[2], 10)) * 1000;
+    }
+    if (remainingMs <= 0) return;
+    // Ticket from page. Scan for ticket labels; fall back to S.ticket.
+    let tk = S.ticket || 'standard';
+    for (const k of Object.keys(TICKETS)) {
+      const lbl = TICKETS[k].label;
+      if (!lbl) continue;
+      const safe = lbl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+      if (new RegExp(`\\b${safe}\\b`, 'i').test(body)) { tk = k; break; }
+    }
+    // Build src/dst + dep/arr.
+    const src = isReturn ? nonTornCity : 'torn';
+    const dst = isReturn ? 'torn' : nonTornCity;
+    const dur = getDur(src, dst, tk);
+    if (dur <= 0) return;
+    // Sanity: remainingMs can't exceed the expected duration by more
+    // than a minute (allow some clock drift).
+    if (remainingMs > dur + 60000) return;
+    const arr = Date.now() + remainingMs;
+    const dep = arr - dur;
+    // Dedup against the current S.flying state.
+    if (S.flying && S.src === src && S.dst === dst && S.arrTime &&
+        Math.abs(S.arrTime - arr) < 30000) return;
+    startFlightTimes(src, dst, tk, dep, arr, isReturn);
+    // Halfway catch-up to suppress retroactive announcement.
+    const total = arr - dep;
+    if (total > 0 && (Date.now() - dep) / total >= 0.5) S.halfwayFired = true;
+    // Refresh Flight View immediately.
+    if (S.flying && S.dst && el.svg) {
+      const vb = getZoomedViewBox(S.src, S.dst);
+      el.svg.setAttribute('viewBox', vb);
+      currentZoom = MAP_W / parseFloat(vb.split(' ')[2]);
+      drawPath(S.src, S.dst);
+      highlightDots(S.src, S.dst);
+      startFlightSampling();
+    }
+    saveS();
   }
 
   function handleNetResponse(url, data) {
