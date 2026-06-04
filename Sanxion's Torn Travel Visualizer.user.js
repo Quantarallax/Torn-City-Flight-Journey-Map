@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.40.0
+// @version      70.41.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -159,13 +159,13 @@
       p => `ATC: ${p.name}, you are cleared for take-off. Runway 1C. Proceed.`,
       () => 'Tower, increasing speed, throttle engaged.',
       p => `Climbing to ${p.maxAlt.toLocaleString()} feet.`,
-      // v70.40.0: small-plane takeoff also notes any faction members on
-      // the same flight path (either direction). Returns null when none
-      // are flying the route, in which case triggerComm filters this out
-      // — so the message only appears when there's actually someone to
-      // mention. Grammar: "X is..." for one member, "X and Y are..." /
-      // "X, Y and Z are..." for two or more.
-      p => formatFactionOnPathLine(p.factionOnPath),
+      // v70.40.0/v70.41.0: small-plane takeoff also notes any faction
+      // members on the same flight path (either direction). Reads
+      // factionData *live* at the moment this template fires (not at the
+      // moment triggerComm captures params) so the message gets the most
+      // recent faction-API data. Returns null when no members match, in
+      // which case triggerComm filters this out.
+      () => formatFactionOnPathLine(factionMembersOnPlayerPath()),
     ],
     turbulence: [
       () => 'Slight turbulence — nothing to worry about.',
@@ -1115,7 +1115,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.40.0</p>
+    <p class="ver-t">Version 70.41.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -2308,6 +2308,54 @@ ${dots}
                 arrTime: S.arrTime || (Date.now() + 3600000),
                 method: TICKETS[S.ticket]?.label || 'Standard'
               };
+            }
+          }
+          // v70.41.0: cross-PC flight sync. The user-API path
+          // (initFromApi/handleNetResponse) isn't reliably picking up
+          // return-flight state on a fresh browser session, but the
+          // faction-API parse above already extracts the player's own
+          // src/dst/dep/arr from their member status description (e.g.
+          // "Traveling from China to Torn City") — and that's the same
+          // data the Faction Flights screen renders correctly. Push it
+          // into S so the Flight View matches. Per spec, only the FLIGHT
+          // PATH is taken from faction data — ticket stays as S.ticket
+          // (m.method is hardcoded 'Standard' in the parser, so it'd be
+          // wrong for any non-standard flight).
+          if (S.player) {
+            for (const id of Object.keys(factionData)) {
+              if (id === 'self_player') continue;
+              const m = factionData[id];
+              if (!m || m.name !== S.player) continue;
+              if (!m.src || !m.dst || !m.depTime || !m.arrTime) continue;
+              // Dedup: skip when a matching flight is already running.
+              // "Matching" = same src, same dst, arr within 30s.
+              const matching = S.flying && S.src === m.src && S.dst === m.dst &&
+                               S.arrTime && Math.abs(S.arrTime - m.arrTime) < 30000;
+              if (matching) break;
+              // Don't pick up if the flight has already ended.
+              if (m.arrTime <= Date.now()) break;
+              const tk = S.ticket || 'standard';
+              const isReturn = (m.dst === 'torn');
+              startFlightTimes(m.src, m.dst, tk, m.depTime, m.arrTime, isReturn);
+              // Catch up so we don't replay halfway commentary on a
+              // mid-flight pickup that's already past 50%.
+              const totalMs = m.arrTime - m.depTime;
+              if (totalMs > 0 && (Date.now() - m.depTime) / totalMs >= 0.5) {
+                S.halfwayFired = true;
+              }
+              // Refresh Flight View visuals immediately so the path,
+              // plane and dots reflect the corrected route without
+              // waiting for the next tick.
+              if (S.flying && S.dst && el.svg) {
+                const vb = getZoomedViewBox(S.src, S.dst);
+                el.svg.setAttribute('viewBox', vb);
+                currentZoom = MAP_W / parseFloat(vb.split(' ')[2]);
+                drawPath(S.src, S.dst);
+                highlightDots(S.src, S.dst);
+                startFlightSampling();
+              }
+              saveS();
+              break;
             }
           }
           // v70.14.0: detect new takeoffs (members flying now who weren't
