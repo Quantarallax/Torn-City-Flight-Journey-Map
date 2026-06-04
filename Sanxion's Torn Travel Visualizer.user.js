@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.43.0
+// @version      70.44.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1117,7 +1117,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.43.0</p>
+    <p class="ver-t">Version 70.44.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -2835,18 +2835,37 @@ ${dots}
   function pickUpFromPage() {
     if (!document.body) return;
     const body = document.body.textContent || '';
-    // Direction.
-    let isReturn = false;
-    let outboundMatch = null;
-    if (/return(?:ing)?\s+to\s+torn/i.test(body)) {
-      isReturn = true;
-    } else {
-      outboundMatch = body.match(/(?:travelling|traveling|flying)\s+to\s+([A-Za-z\s]{3,30})(?:[.,\n]|$)/i);
-      if (!outboundMatch) return;
-    }
-    // Non-Torn city from factionData (player's own entry).
+    // v70.44.0: Torn's page shows return flights as "[departure city] to
+    // Torn" (e.g. "Mexico to Torn", "South Africa to Torn City") — not
+    // "Returning to Torn" as the earlier regex assumed. Capture the
+    // departure city directly. Limit to 1-2 words so multi-word place
+    // names ("South Africa", "Cayman Islands", "United Kingdom") match
+    // while runaway captures across unrelated text don't.
+    let isReturn = null;
     let nonTornCity = null;
-    if (S.player) {
+    const retMatch = body.match(/\b([A-Za-z]+(?:\s+[A-Za-z]+)?)\s+to\s+torn(?:\s+city)?\b/i);
+    if (retMatch) {
+      const cand = matchDest(retMatch[1]);
+      if (cand && cand !== 'torn') {
+        isReturn = true;
+        nonTornCity = cand;
+      }
+    }
+    if (isReturn === null) {
+      const outMatch = body.match(/(?:travelling|traveling|flying)\s+to\s+([A-Za-z\s]{3,30})(?:[.,\n]|$)/i);
+      if (outMatch) {
+        const cand = matchDest(outMatch[1]);
+        if (cand && cand !== 'torn') {
+          isReturn = false;
+          nonTornCity = cand;
+        }
+      }
+    }
+    if (isReturn === null) return;
+    // Fallback: if the page-direction was detected but the city couldn't
+    // be resolved via matchDest, take it from factionData (the player's
+    // own entry there has src/dst parsed from the API).
+    if (!nonTornCity && S.player) {
       for (const id of Object.keys(factionData)) {
         if (id === 'self_player') continue;
         const m = factionData[id];
@@ -2858,12 +2877,6 @@ ${dots}
         }
         break;
       }
-    }
-    // Fallback for outbound: use the destination name parsed from page
-    // text. (Return flights have no DOM-visible source name, so they
-    // require factionData; no fallback there.)
-    if (!nonTornCity && !isReturn && outboundMatch) {
-      nonTornCity = matchDest(outboundMatch[1]);
     }
     if (!nonTornCity || nonTornCity === 'torn') return;
     // Remaining time. Several formats appear in Torn's UI; try each.
