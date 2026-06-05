@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.46.0
+// @version      70.47.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -846,6 +846,10 @@ ${dots}
     }
     if (S.inJail) {
       S.inJail = false;
+      // v70.47.0: per updated spec, emit a one-time release message when
+      // the jail text disappears (mirrors the race-closure re-open
+      // pattern). Hospital uses a similar "discharged" line above.
+      addLog('You are out of jail. Airport accessible.');
       saveS();
     }
     const RACE_STRING = 'You are currently in a race, you must leave or wait';
@@ -1149,7 +1153,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.46.0</p>
+    <p class="ver-t">Version 70.47.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
