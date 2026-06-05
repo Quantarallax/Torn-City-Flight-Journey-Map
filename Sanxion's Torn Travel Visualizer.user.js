@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.45.0
+// @version      70.46.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -235,7 +235,7 @@
     ticket:'standard', player:'Pilot', flying:false, isReturn:false,
     prevPhase:'', phasesTriggered:{}, turbTriggered:false, halfwayFired:false,
     log:[], px:20, py:60, pw:680, ph_panel:520, min:false, page:'main', apiKey:'',
-    previewDst:null, inflightSchedule:null, planeScale:100, inflightLogStart:null, diagnostics:null, airportClosed:false, inHospital:false, terrorThreat:false, stateOfEmergency:false, flightHistory:{ samples:[] }, factionName:'', commSchedule:[], commUsedIds:[],
+    previewDst:null, inflightSchedule:null, planeScale:100, inflightLogStart:null, diagnostics:null, airportClosed:false, inHospital:false, inJail:false, terrorThreat:false, stateOfEmergency:false, flightHistory:{ samples:[] }, factionName:'', commSchedule:[], commUsedIds:[],
   };
 
   const saveS = () => {
@@ -245,7 +245,7 @@
         ticket:S.ticket, player:S.player, flying:S.flying, isReturn:S.isReturn,
         prevPhase:S.prevPhase, phasesTriggered:S.phasesTriggered, turbTriggered:S.turbTriggered, halfwayFired:S.halfwayFired,
         log:S.log.slice(-30), px:S.px, py:S.py, pw:S.pw, ph_panel:S.ph_panel,
-        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale, inflightLogStart:S.inflightLogStart, diagnostics:S.diagnostics, airportClosed:S.airportClosed, inHospital:S.inHospital, terrorThreat:S.terrorThreat, stateOfEmergency:S.stateOfEmergency, flightHistory:S.flightHistory, factionName:S.factionName, commSchedule:S.commSchedule, commUsedIds:S.commUsedIds,
+        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale, inflightLogStart:S.inflightLogStart, diagnostics:S.diagnostics, airportClosed:S.airportClosed, inHospital:S.inHospital, inJail:S.inJail, terrorThreat:S.terrorThreat, stateOfEmergency:S.stateOfEmergency, flightHistory:S.flightHistory, factionName:S.factionName, commSchedule:S.commSchedule, commUsedIds:S.commUsedIds,
       }));
     } catch(e) {}
   };
@@ -823,9 +823,41 @@ ${dots}
       addLog('You have been discharged from hospital.');
       saveS();
     }
+    // v70.46.0: IN JAIL — mirrors hospital handling. Shows status as
+    // 'NO FLYING ALLOWED' (reusing PHASE_CFG.inaccessible) and a one-time
+    // commentary line. Jail status overrides flight too — a player in
+    // jail can't be mid-flight in practice.
+    const JAIL_STRING = 'not available while in jail';
+    const inJailNow = bodyAll.includes(JAIL_STRING);
+    if (inJailNow) {
+      if (!S.inJail) {
+        S.inJail = true;
+        clearClosedStateVisuals();
+        addLog('You are in jail, no flying at the moment.');
+        recentMessages.push('in jail');
+        saveS();
+      }
+      if (el.status) {
+        stopReadyFlash(); el.status.textContent = PHASE_CFG.inaccessible.label;
+        el.status.style.color = PHASE_CFG.inaccessible.col;
+      }
+      loopTmr = setTimeout(tick, 1000);
+      return;
+    }
+    if (S.inJail) {
+      S.inJail = false;
+      saveS();
+    }
     const RACE_STRING = 'You are currently in a race, you must leave or wait';
     const raceTextPresent = bodyText.includes(RACE_STRING);
-    if (raceTextPresent) {
+    // v70.46.0: race-closure override is suppressed when a flight is in
+    // progress. The player can join a race while mid-flight; the page
+    // text still contains the race message, but the flight takes
+    // display precedence and the phase status (TAKE-OFF / IN FLIGHT /
+    // etc.) continues to drive el.status. Without this gate, a refresh
+    // mid-flight while racing produced "AIRPORT CLOSED" instead of
+    // showing the flight.
+    if (raceTextPresent && !S.flying) {
       _noRaceCount = 0;
       if (!S.airportClosed) {
         S.airportClosed = true;
@@ -845,12 +877,12 @@ ${dots}
       loopTmr = setTimeout(tick, 1000);
       return;
     }
-    if (S.airportClosed) {
+    if (S.airportClosed && (!raceTextPresent || S.flying)) {
       _noRaceCount = (_noRaceCount || 0) + 1;
       if (_noRaceCount >= 1) {
         S.airportClosed = false;
         _noRaceCount = 0;
-        addLog('Airport has re-opened.');
+        if (!S.flying) addLog('Airport has re-opened.');
         saveS();
       } else {
         if (el.status) {
@@ -1117,7 +1149,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.45.0</p>
+    <p class="ver-t">Version 70.46.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -2970,7 +3002,10 @@ ${dots}
             document.body.textContent.includes('You are currently in a race, you must leave or wait')) {
           if (loopTmr) clearTimeout(loopTmr);
           tick();
-          return;
+          // v70.46.0: don't early-return — pickUpFromPage and the other
+          // scrapes below still need to run so a mid-flight race-join
+          // doesn't block flight detection. tick() now also defers to
+          // S.flying when deciding whether to apply race closure.
         }
         const tk = readSelectedTicket();
         if (tk && tk !== S.ticket) {
