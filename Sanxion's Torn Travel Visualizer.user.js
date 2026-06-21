@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      80.0.0
+// @version      80.1.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1153,7 +1153,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 80.0.0</p>
+    <p class="ver-t">Version 80.1.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1227,6 +1227,10 @@ ${dots}
         highlightedFactionId = (highlightedFactionId === fid) ? null : fid;
         drawFactionFlights();
         renderFactionRoster();
+        // v80.1.0: zoom in tight on the highlighted route when set, or
+        // back to faction-wide fit when cleared. zoomToFitFaction
+        // branches on highlightedFactionId internally.
+        zoomToFitFaction();
       });
     }
     panel.style.left = S.px + 'px';
@@ -2112,6 +2116,17 @@ ${dots}
     const g = document.getElementById('tcfv-factiong');
     if (!g) return;
     if (!factionFlightsOn) { g.innerHTML = ''; return; }
+    // v80.1.0: if the highlighted member has dropped out of factionData
+    // (they landed, or were otherwise removed), clear the highlight so
+    // the display reverts to the all-faction view per spec ("if that
+    // player lands while highlighted it will revert back"). The next
+    // zoomToFitFaction call will then zoom out, and a roster re-render
+    // strips the row highlight.
+    if (highlightedFactionId !== null && !factionData[highlightedFactionId]) {
+      highlightedFactionId = null;
+      renderFactionRoster();
+      zoomToFitFaction();
+    }
     const now = Date.now();
     const routeGroups = {};
     for (const [rid, rm] of Object.entries(factionData)) {
@@ -2463,6 +2478,20 @@ ${dots}
 
   function zoomToFitFaction() {
     if (!el.svg || !factionFlightsOn) return;
+    // v80.1.0: when a highlight is active, zoom in tightly on the
+    // highlighted member's flight path instead of fitting all faction
+    // flights. Same route-sizing logic as the player's own Flight View.
+    // Falls through to the all-fit logic if the highlighted member has
+    // disappeared from factionData (handled in drawFactionFlights).
+    if (highlightedFactionId !== null && factionData[highlightedFactionId]) {
+      const hm = factionData[highlightedFactionId];
+      if (hm.src && hm.dst && DESTS[hm.src] && DESTS[hm.dst]) {
+        const vb = getZoomedViewBox(hm.src, hm.dst);
+        el.svg.setAttribute('viewBox', vb);
+        currentZoom = MAP_W / parseFloat(vb.split(' ')[2]);
+        return;
+      }
+    }
     const now = Date.now();
     const pts = [];
     for (const m of Object.values(factionData)) {
