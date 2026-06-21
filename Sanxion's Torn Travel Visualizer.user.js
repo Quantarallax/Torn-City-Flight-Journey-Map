@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      70.47.0
+// @version      80.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1153,7 +1153,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 70.47.0</p>
+    <p class="ver-t">Version 80.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -1211,6 +1211,24 @@ ${dots}
       pgDiag: panel.querySelector('#tcfv-diag'),
       svg: panel.querySelector('#tcfv-svg'),
     };
+    // v80.0.0: roster click delegation for HIGHLIGHT A FACTION FLIGHT.
+    // Attached once here on el.log so it survives every innerHTML
+    // rebuild in renderFactionRoster. Only handles flying-member rows
+    // (they carry a data-fid). Toggles highlightedFactionId and forces a
+    // redraw of the map and the roster so the visual state stays in
+    // sync.
+    if (el.log) {
+      el.log.addEventListener('click', (ev) => {
+        if (!factionFlightsOn) return;
+        const row = ev.target && ev.target.closest ? ev.target.closest('[data-fid]') : null;
+        if (!row) return;
+        const fid = row.getAttribute('data-fid');
+        if (!fid) return;
+        highlightedFactionId = (highlightedFactionId === fid) ? null : fid;
+        drawFactionFlights();
+        renderFactionRoster();
+      });
+    }
     panel.style.left = S.px + 'px';
     panel.style.top = S.py + 'px';
     // v70.10.0: drag from anywhere inside the panel (exclusions handled in makeDrag).
@@ -1967,6 +1985,12 @@ ${dots}
   ───────────────────────────────────────────────────────────── */
 
   let factionFlightsOn = false;
+  // v80.0.0: id of the currently-highlighted faction member, or null. When
+  // set, drawFactionFlights dims every other flight/plane/name to ~0.15
+  // opacity and renders the highlighted entry at full brightness with an
+  // enlarged name label; renderFactionRoster bolds and tints the
+  // matching roster row. UI state — not persisted across reloads.
+  let highlightedFactionId = null;
   let factionDrawTimer = null;
   let factionData = {};
   let factionAbroad = {};
@@ -2095,7 +2119,14 @@ ${dots}
       if (!routeGroups[rk]) routeGroups[rk] = [];
       routeGroups[rk].push(rid);
     }
+    // v80.0.0: when a highlight is active, dim non-highlighted entries
+    // to 0.15 and the highlighted one stays at full brightness. When no
+    // highlight is active, the historical opacities apply (0.45 path,
+    // 0.95 plane/text). Highlight also enlarges the name label to 11px
+    // and emphasises the src/dst city dots with a glow ring.
+    const hasHL = highlightedFactionId !== null && factionData[highlightedFactionId];
     let html = '';
+    let endpointRingsHtml = '';
     for (const [fid, m] of Object.entries(factionData)) {
       const sk = m.src, dk = m.dst;
       if (!sk || !dk || sk === dk || !DESTS[sk] || !DESTS[dk]) continue;
@@ -2115,18 +2146,12 @@ ${dots}
         const p = bPt(i / 60, bez.s, bez.c, bez.d);
         pts.push(`${p.x.toFixed(1)},${p.y.toFixed(1)}`);
       }
-      // FIX 5 (v70.5.0): Stagger uses canonical (sorted-endpoint) bezier as a
-      // shared perpendicular reference so opposite-direction flights on the
-      // same route always offset to different sides. Previously each plane
-      // computed perp from its own tangent, which flipped sign for reversed
-      // direction and cancelled the stagger at mirror progress points.
       const rk2 = [sk, dk].sort().join('_');
       const grp = routeGroups[rk2] || [fid];
       const grpIdx = grp.indexOf(fid);
       const t = Math.max(0.001, Math.min(0.999, progress));
       const basePos = bPt(t, bez.s, bez.c, bez.d);
       const tangentDeg = bAng(t, bez.s, bez.c, bez.d);
-      // Canonical perpendicular reference frame: same for all planes on route.
       const sortedKeys = [sk, dk].sort();
       const canonBez = buildBez(sortedKeys[0], sortedKeys[1]);
       const isCanonicalDir = sk === sortedKeys[0];
@@ -2158,13 +2183,27 @@ ${dots}
   <polygon points="0,2.5 -1.5,4 -1,4.5 0,3.25 1,4.5 1.5,4" fill="white" stroke="black" stroke-width="0.6"/>
   <line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="black" stroke-width="1.2" stroke-linecap="round"/>`;
       }
-      // v70.13.0: aligned prop_plane with the other types — no +180 flip needed.
       const fAng = ang;
-      // FIX 2 (v70.2.0): Alternate name above/below plane.
       const lblY = (grpIdx % 2 === 0) ? (pos.y - 6) : (pos.y + 11);
-      html += `<polyline points="${pts.join(' ')}" fill="none" stroke="#888" stroke-width="${sw}" stroke-dasharray="10,6" opacity="0.45"/>
-<g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${fAng.toFixed(1)}) scale(${sc})" opacity="0.95">${shape}</g>
-<text x="${(pos.x + 5).toFixed(1)}" y="${lblY.toFixed(1)}" fill="white" font-size="8" font-family="monospace" font-weight="bold" opacity="0.95" stroke="#000" stroke-width="0.4" paint-order="stroke fill">${m.name}</text>`;
+      // v80.0.0: per-entry opacities and font size.
+      const isHL = hasHL && fid === highlightedFactionId;
+      const pathOp = hasHL ? (isHL ? 0.85 : 0.15) : 0.45;
+      const planeOp = hasHL ? (isHL ? 1.0 : 0.15) : 0.95;
+      const textOp = hasHL ? (isHL ? 1.0 : 0.15) : 0.95;
+      const fontSize = isHL ? 11 : 8;
+      html += `<polyline points="${pts.join(' ')}" fill="none" stroke="#888" stroke-width="${sw}" stroke-dasharray="10,6" opacity="${pathOp}"/>
+<g transform="translate(${pos.x.toFixed(1)},${pos.y.toFixed(1)}) rotate(${fAng.toFixed(1)}) scale(${sc})" opacity="${planeOp}">${shape}</g>
+<text x="${(pos.x + 5).toFixed(1)}" y="${lblY.toFixed(1)}" fill="white" font-size="${fontSize}" font-family="monospace" font-weight="bold" opacity="${textOp}" stroke="#000" stroke-width="0.4" paint-order="stroke fill">${m.name}</text>`;
+      // v80.0.0: emphasis rings at the highlighted route's endpoints.
+      // The src and dst city dots get a glow ring drawn over the top
+      // (kept in a separate buffer so they render LAST and aren't dimmed
+      // by other planes drawn over them).
+      if (isHL) {
+        const sp = toXY(DESTS[sk].lon, DESTS[sk].lat);
+        const dp = toXY(DESTS[dk].lon, DESTS[dk].lat);
+        endpointRingsHtml += `<circle cx="${sp.x.toFixed(1)}" cy="${sp.y.toFixed(1)}" r="7" fill="none" stroke="#ffdd44" stroke-width="1.3" opacity="0.9"/>
+<circle cx="${dp.x.toFixed(1)}" cy="${dp.y.toFixed(1)}" r="7" fill="none" stroke="#ffdd44" stroke-width="1.3" opacity="0.9"/>`;
+      }
     }
     const abroadGroups = {};
     for (const [, mb] of Object.entries(factionAbroad)) {
@@ -2176,18 +2215,18 @@ ${dots}
       const dp2 = DESTS[destKey2];
       if (!dp2) continue;
       const dp2pos = toXY(dp2.lon, dp2.lat);
-      // v70.22.0: was a `.forEach(...)` callback — eslint flagged no-loop-func
-      // because forEach creates a fresh function on every outer loop pass.
-      // Plain for-loop is identical semantically and has no captured-closure
-      // concern.
       for (let ni2 = 0; ni2 < abNames.length; ni2++) {
         const nm2 = abNames[ni2];
         const yOff2 = (ni2 - (abNames.length - 1) / 2) * 9;
-        html += '<circle cx="' + dp2pos.x.toFixed(1) + '" cy="' + dp2pos.y.toFixed(1) + '" r="4" fill="#44cc66" stroke="#226644" stroke-width="0.8" opacity="0.8"/>';
-        html += '<text x="' + (dp2pos.x + 8).toFixed(1) + '" y="' + (dp2pos.y + yOff2 + 2).toFixed(1) + '" fill="white" font-size="7" font-family="monospace" opacity="0.85">' + nm2 + '</text>';
+        // v80.0.0: dim abroad markers when a highlight is active.
+        const abOp = hasHL ? 0.15 : 0.8;
+        const abTextOp = hasHL ? 0.15 : 0.85;
+        html += '<circle cx="' + dp2pos.x.toFixed(1) + '" cy="' + dp2pos.y.toFixed(1) + '" r="4" fill="#44cc66" stroke="#226644" stroke-width="0.8" opacity="' + abOp + '"/>';
+        html += '<text x="' + (dp2pos.x + 8).toFixed(1) + '" y="' + (dp2pos.y + yOff2 + 2).toFixed(1) + '" fill="white" font-size="7" font-family="monospace" opacity="' + abTextOp + '">' + nm2 + '</text>';
       }
     }
-    g.innerHTML = html;
+    // Endpoint rings rendered last so they sit on top of dimmed elements.
+    g.innerHTML = html + endpointRingsHtml;
   }
 
   let factionAllMembers = {};
@@ -2243,7 +2282,14 @@ ${dots}
       const planeIcon = isSmall
         ? '<svg width="14" height="14" viewBox="-6 -6 12 12"><ellipse cx="0" cy="0" rx="1" ry="3.5" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="-4,-0.3 -3.5,0.5 3.5,0.5 4,-0.3" fill="#aaa" stroke="#666" stroke-width="0.5"/><line x1="-1.2" y1="3.5" x2="1.2" y2="3.5" stroke="#aaa" stroke-width="0.9"/></svg>'
         : '<svg width="14" height="14" viewBox="-7 -7 14 14"><ellipse cx="0" cy="0" rx="1.5" ry="4" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,-1.5 -6,1 -5.5,2 0,-0.2 5.5,2 6,1" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,2.5 -2,4 -1.5,4.5 0,3.5 1.5,4.5 2,4" fill="#aaa" stroke="#666" stroke-width="0.5"/></svg>';
-      html += `<div class="tl tln" style="color:#88ddff;font-size:10px;line-height:16px;display:flex;align-items:center;gap:4px"><span style="flex-shrink:0;display:inline-flex;align-items:center;width:14px;justify-content:center">${planeIcon}</span><span style="flex:0 0 ${nameW}px;overflow:hidden;white-space:nowrap">${m.name}</span><span style="flex:0 0 ${routeW}px;overflow:hidden;white-space:nowrap">${srcCity}→${dstCity}</span><span style="flex:1;white-space:nowrap">${timeStr}</span></div>`;
+      // v80.0.0: clickable row. data-fid lets the delegated click handler
+      // resolve which member was clicked. Highlighted row gets a yellow
+      // tint, bold text and a subtle background bar.
+      const isHL = (highlightedFactionId === m.id);
+      const rowBg = isHL ? 'background:rgba(255,221,68,0.12);' : '';
+      const rowColour = isHL ? '#ffdd44' : '#88ddff';
+      const rowWeight = isHL ? 'font-weight:bold;' : '';
+      html += `<div class="tl tln" data-fid="${m.id}" style="${rowBg}color:${rowColour};font-size:10px;line-height:16px;display:flex;align-items:center;gap:4px;cursor:pointer;${rowWeight}"><span style="flex-shrink:0;display:inline-flex;align-items:center;width:14px;justify-content:center">${planeIcon}</span><span style="flex:0 0 ${nameW}px;overflow:hidden;white-space:nowrap">${m.name}</span><span style="flex:0 0 ${routeW}px;overflow:hidden;white-space:nowrap">${srcCity}→${dstCity}</span><span style="flex:1;white-space:nowrap">${timeStr}</span></div>`;
     }
     for (const ab of abroad) {
       const dCity = DESTS[ab.dest]?.city || ab.dest || '?';
@@ -2494,6 +2540,9 @@ ${dots}
       factionDrawTimer = setInterval(() => { drawFactionFlights(); zoomToFitFaction(); renderFactionRoster(); }, 5000);
     } else {
       btn?.classList.remove('ta');
+      // v80.0.0: clear highlight when faction view turns off so a stale
+      // selection doesn't carry over to the next time the user opens it.
+      highlightedFactionId = null;
       clearInterval(factionDrawTimer);
       factionDrawTimer = null;
       // v70.14.0: keep factionData populated so the background poller can
