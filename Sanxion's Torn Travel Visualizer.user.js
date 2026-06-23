@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      80.1.0
+// @version      80.2.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1153,7 +1153,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 80.1.0</p>
+    <p class="ver-t">Version 80.2.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -2966,6 +2966,25 @@ ${dots}
       }
     }
     if (isReturn === null) {
+      // v80.2.0: Torn's redesigned travel page (June 2026) shows the
+      // route as "Torn to [city]" in the footer (e.g. "Torn to George
+      // Town. Remaining Flight Time - 00:21:20"). Previous outbound
+      // detection relied on "Travelling to [city]" wording which is no
+      // longer present. The return regex above runs first and won't
+      // match "Torn to X" because it requires Torn after "to", not
+      // before — so the two patterns can't collide.
+      const fromTornMatch = body.match(/\btorn(?:\s+city)?\s+to\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)\b/i);
+      if (fromTornMatch) {
+        const cand = matchDest(fromTornMatch[1]);
+        if (cand && cand !== 'torn') {
+          isReturn = false;
+          nonTornCity = cand;
+        }
+      }
+    }
+    if (isReturn === null) {
+      // Legacy outbound wording — kept as a third-tier fallback in case
+      // any other Torn page or interim state still uses it.
       const outMatch = body.match(/(?:travelling|traveling|flying)\s+to\s+([A-Za-z\s]{3,30})(?:[.,\n]|$)/i);
       if (outMatch) {
         const cand = matchDest(outMatch[1]);
@@ -3101,10 +3120,15 @@ ${dots}
         }
         if (!S.flying) {
           const body = document.body.textContent;
-          const m = body.match(/(?:travelling|traveling|flying)\s+to\s+([A-Za-z\s]{3,30})(?:[.,\n]|$)/i);
+          // v80.2.0: new Torn page wording "Torn to [city]" tried first;
+          // legacy "travelling to" wording kept as fallback.
+          let m = body.match(/\btorn(?:\s+city)?\s+to\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)\b/i);
+          if (!m) {
+            m = body.match(/(?:travelling|traveling|flying)\s+to\s+([A-Za-z\s]{3,30})(?:[.,\n]|$)/i);
+          }
           if (m) {
             const dk = matchDest(m[1]);
-            if (dk && dk !== S.dst) {
+            if (dk && dk !== S.dst && dk !== 'torn') {
               const dur = getDur(S.src, dk, S.ticket);
               startFlightTimes(S.src, dk, S.ticket, Date.now(), Date.now() + dur, S.src !== 'torn');
             }
