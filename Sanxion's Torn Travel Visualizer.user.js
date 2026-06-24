@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      80.3.0
+// @version      80.6.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -147,9 +147,9 @@
       p => `Welcome to your flight to ${p.dst}. Extinguish all doobies and put seats in upright position.`,
       () => 'Sit back and relax.',
       p => `Climbing to ${p.maxAlt.toLocaleString()} feet.`,
-      // v80.3.0: return-flight only Travel 2.0 lore beat. Returns null on
-      // outbound flights so triggerComm filters it out.
-      p => p.isTornCity ? "TRAVEL 2.0 is being implemented. Don't be surprised if your plane goes down." : null,
+      // v80.4.0: Travel 2.0 lore beat now fires on both outbound and
+      // return flights (per updated spec). Unconditional template.
+      () => "TRAVEL 2.0 is being implemented. Don't be surprised if your plane goes down.",
     ],
     takeoff_small: [
       // v70.38.0: prepended with the old ready_small lines so pre-flight
@@ -171,8 +171,8 @@
       // (fires ~30s in) sees the populated factionData. Returns null if
       // no members match, which triggerComm filters out.
       () => formatFactionOnPathLine(factionMembersOnPlayerPath()),
-      // v80.3.0: return-flight only Travel 2.0 lore beat.
-      p => p.isTornCity ? "TRAVEL 2.0 is being implemented. Don't be surprised if your plane goes down." : null,
+      // v80.4.0: Travel 2.0 lore beat — both directions.
+      () => "TRAVEL 2.0 is being implemented. Don't be surprised if your plane goes down.",
     ],
     turbulence: [
       () => 'Slight turbulence — nothing to worry about.',
@@ -184,7 +184,13 @@
       () => 'Please fasten your seatbelts.',
       () => 'Thank you for flying with us.',
       p => `Weather in ${p.dst} is ${rndW()}. Have a nice day.`,
-      p => `${p.name} checks their weapons and realises they don't have any.`,
+      // v80.6.0: weapons line direction-conditional again. Outbound keeps
+      // the "realises they don't have any" wording. Return to Torn uses
+      // a noncommittal phrasing — Travel 2.0 inventory may or may not
+      // survive the round trip.
+      p => p.isTornCity
+        ? `${p.name} checks their weapons and maybe does, maybe doesn't find any ready for disembarkation.`
+        : `${p.name} checks their weapons and realises they don't have any.`,
     ],
     descent_small: [
       () => 'Radar shows a clear descent vector.',
@@ -192,23 +198,27 @@
       p => `${p.name} requesting clearance into ${p.dst}.`,
       () => 'ATC: Confirmed, follow pre-planned flight path.',
       p => `Weather in ${p.dst} is ${rndW()}. Have a nice day.`,
-      p => `${p.name} checks their weapons and realises they don't have any.`,
+      // v80.6.0: weapons line direction-conditional (see descent_large).
+      p => p.isTornCity
+        ? `${p.name} checks their weapons and maybe does, maybe doesn't find any ready for disembarkation.`
+        : `${p.name} checks their weapons and realises they don't have any.`,
     ],
     landing_large: [
       () => 'Ladies and gentleman, we are close to landing. Please put seat backs in the upright position.',
       () => 'This is your captain speaking, burp, oops there goes the... click.',
       () => 'The to-ing and fro-ing of the plane is unnerving.',
       () => 'Yes, weapons look good and oiled.',
-      // v80.3.0: closing landing beat per spec.
-      () => 'Good luck out there, in-out or grab a weapon.',
+      // v80.4.0: closing landing beat — outbound only. The in-out/grab a
+      // weapon advice doesn't fit a return landing at Torn.
+      p => p.isTornCity ? null : 'Good luck out there, in-out or grab a weapon.',
     ],
     landing_small: [
       () => 'Slight turbulence, but not too bad.',
       () => 'Approach is clear, no crosswind.',
       () => 'Yes, weapons look good and oiled.',
       () => "You can't wait to get out of this thing.",
-      // v80.3.0: closing landing beat per spec.
-      () => 'Good luck out there, in-out or grab a weapon.',
+      // v80.4.0: closing landing beat — outbound only.
+      p => p.isTornCity ? null : 'Good luck out there, in-out or grab a weapon.',
     ],
     arrived: [
       () => '*Screech of tyres on tarmac.*',
@@ -1162,7 +1172,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 80.3.0</p>
+    <p class="ver-t">Version 80.6.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
