@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      80.8.0
+// @version      80.9.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1172,10 +1172,10 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 80.8.0</p>
+    <p class="ver-t">Version 80.9.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
-    <p style="margin-top:14px"><a href="https://www.torn.com/forums.php#/p=threads&f=21&t=16559767&b=0&a=0&start=20&to=0" target="_blank" style="color:#88ddff;text-decoration:underline">Forum link: Bugs, feedback and LIKES welcome!</a></p>
+    <p style="margin-top:14px"><a href="https://www.torn.com/forums.php#/p=threads&f=67&t=16558163&b=0&a=0" target="_blank" style="color:#88ddff;text-decoration:underline">Forum link: Bugs, feedback and LIKES welcome!</a></p>
     <p style="margin-top:6px"><a href="https://greasyfork.org/en/users/1593713-quantarallax?sort=total_installs" target="_blank" style="color:#88ddff;text-decoration:underline">Sanxion's Other Scripts</a></p>
     <hr>
     <p class="note">Built for the Torn City community. Not affiliated with Torn Ltd.<br>
