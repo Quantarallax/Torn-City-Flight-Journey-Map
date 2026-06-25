@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      80.6.0
+// @version      80.7.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1172,7 +1172,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 80.6.0</p>
+    <p class="ver-t">Version 80.7.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <hr>
@@ -3032,16 +3032,35 @@ ${dots}
     }
     if (!nonTornCity || nonTornCity === 'torn') return;
     // Remaining time. Several formats appear in Torn's UI; try each.
+    // v80.7.0: countdown scrape is now ANCHORED on the literal
+    // "Remaining Flight Time" label that appears next to the actual
+    // flight countdown in Torn's new travel page footer. Without this
+    // anchor the regex used to match the first HH:MM:SS or "Xh Ym"
+    // string anywhere on the page — which could be the wall-clock
+    // landing time ("Landing at 15:56:59"), or completely unrelated
+    // timers elsewhere on the page (drug cooldowns, energy bars,
+    // education timers, etc.). Result was a flight registered with an
+    // off-by-minutes arrival time that then locked in via the dedup
+    // guard. The label-anchored pattern is unique and unambiguous on the
+    // flight page.
     let remainingMs = 0;
-    const hmsHM = body.match(/(\d+)\s*h(?:ours?)?\s*(\d+)\s*m(?:in(?:ute)?s?)?/i);
-    const colon = body.match(/\b(\d{1,2}):(\d{2}):(\d{2})\b/);
-    const msMS = body.match(/(\d+)\s*m(?:in(?:ute)?s?)?\s*(\d+)\s*s(?:ec(?:ond)?s?)?/i);
-    if (hmsHM) {
-      remainingMs = (parseInt(hmsHM[1], 10) * 3600 + parseInt(hmsHM[2], 10) * 60) * 1000;
-    } else if (colon) {
-      remainingMs = (parseInt(colon[1], 10) * 3600 + parseInt(colon[2], 10) * 60 + parseInt(colon[3], 10)) * 1000;
-    } else if (msMS) {
-      remainingMs = (parseInt(msMS[1], 10) * 60 + parseInt(msMS[2], 10)) * 1000;
+    const labelled = body.match(/Remaining\s+Flight\s+Time[^0-9]*?(\d{1,2}):(\d{2}):(\d{2})/i);
+    if (labelled) {
+      remainingMs = (parseInt(labelled[1], 10) * 3600 + parseInt(labelled[2], 10) * 60 + parseInt(labelled[3], 10)) * 1000;
+    } else {
+      // Fallbacks only used when the label is missing (legacy / interim
+      // page states). Less reliable since they can match unrelated
+      // timers — but better than failing to detect a flight at all.
+      const hmsHM = body.match(/(\d+)\s*h(?:ours?)?\s*(\d+)\s*m(?:in(?:ute)?s?)?/i);
+      const colon = body.match(/\b(\d{1,2}):(\d{2}):(\d{2})\b/);
+      const msMS = body.match(/(\d+)\s*m(?:in(?:ute)?s?)?\s*(\d+)\s*s(?:ec(?:ond)?s?)?/i);
+      if (hmsHM) {
+        remainingMs = (parseInt(hmsHM[1], 10) * 3600 + parseInt(hmsHM[2], 10) * 60) * 1000;
+      } else if (colon) {
+        remainingMs = (parseInt(colon[1], 10) * 3600 + parseInt(colon[2], 10) * 60 + parseInt(colon[3], 10)) * 1000;
+      } else if (msMS) {
+        remainingMs = (parseInt(msMS[1], 10) * 60 + parseInt(msMS[2], 10)) * 1000;
+      }
     }
     if (remainingMs <= 0) return;
     // Ticket from page. Scan for ticket labels; fall back to S.ticket.
