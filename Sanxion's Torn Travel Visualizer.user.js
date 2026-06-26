@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      80.11.0
+// @version      80.12.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -207,7 +207,10 @@
       () => 'Ladies and gentleman, we are close to landing. Please put seat backs in the upright position.',
       () => 'This is your captain speaking, burp, oops there goes the... click.',
       () => 'The to-ing and fro-ing of the plane is unnerving.',
-      () => 'Yes, weapons look good and oiled.',
+      // v80.12.0: commented out per spec — "weapons look good and oiled"
+      // shouldn't display. Reinstate by uncommenting if Travel 2.0 ever
+      // restores weapon-carry on outbound legs.
+      // () => 'Yes, weapons look good and oiled.',
       // v80.4.0: closing landing beat — outbound only. The in-out/grab a
       // weapon advice doesn't fit a return landing at Torn.
       p => p.isTornCity ? null : 'Good luck out there, in-out or grab a weapon.',
@@ -215,7 +218,8 @@
     landing_small: [
       () => 'Slight turbulence, but not too bad.',
       () => 'Approach is clear, no crosswind.',
-      () => 'Yes, weapons look good and oiled.',
+      // v80.12.0: commented out per spec — same reason as landing_large.
+      // () => 'Yes, weapons look good and oiled.',
       () => "You can't wait to get out of this thing.",
       // v80.4.0: closing landing beat — outbound only.
       p => p.isTornCity ? null : 'Good luck out there, in-out or grab a weapon.',
@@ -246,13 +250,117 @@
   }
 
   /* ─────────────────────────────────────────────────────────────
+     RETURN-FLIGHT ITEMS COMMENTARY  (v80.12.0)
+     Scrapes the Travel 2.0 in-flight page inventory panel, groups
+     items by category, and picks a single one-shot commentary line
+     during the first ~5% of a return flight.
+  ───────────────────────────────────────────────────────────── */
+
+  const ITEM_GROUP_PATTERNS = {
+    // Firearms + melee + heavy. "gun" alone is intentionally omitted
+    // (false-positives on "shotgun" already covered, "machine gun" too).
+    weapons: /\b(pistol|revolver|glock|beretta|smg|submachine|rifle|shotgun|sniper|machine\s*gun|carbine|musket|m4|m16|m60|mp5|ump|uzi|p90|ak[-\s]?\d+|knife|dagger|machete|sword|katana|axe|hatchet|hammer|club|baton|mace|nunchaku|nunchucks|brass\s*knuckles|kunai|shuriken|sledgehammer|grenade|c4|tnt|rpg|bazooka|mortar|flamethrower|launcher|crossbow)\b/i,
+    armour: /\b(vest|helmet|armou?r|gauntlet|pads|shin\s*guards?|kevlar|riot\s*shield|chestplate|greaves|pauldrons?)\b/i,
+    drugs: /\b(cannabis|weed|marijuana|joint|vicodin|xanax|opium|heroin|cocaine|crack|lsd|ecstasy|mdma|pcp|shrooms|mushrooms|speed|meth|methamphetamine|ketamine|adderall|painkiller)\b/i,
+    candy: /\b(chocolate|lollipop|lollypop|candy|sweets?|gummy|gummies|bonbon|toffee|caramel|truffle|fudge|jelly\s*bean)\b/i,
+  };
+
+  function categorizeItem(name) {
+    const n = String(name || '').toLowerCase();
+    if (!n) return 'other';
+    if (ITEM_GROUP_PATTERNS.weapons.test(n)) return 'weapons';
+    if (ITEM_GROUP_PATTERNS.armour.test(n)) return 'armour';
+    if (ITEM_GROUP_PATTERNS.drugs.test(n)) return 'drugs';
+    if (ITEM_GROUP_PATTERNS.candy.test(n)) return 'candy';
+    return 'other';
+  }
+
+  function scrapeInventory() {
+    // Travel 2.0 inventory panel. CSS-module class names have hashed
+    // suffixes (e.g. `inventoryPanel___myfES`) that change between Torn
+    // deploys, so anchor on the aria-label first; fall back to a class
+    // prefix selector if aria-label is missing.
+    const items = [];
+    const seen = new Set();
+    let panels = document.querySelectorAll('ul[aria-label^="Inventory" i]');
+    if (panels.length === 0) {
+      panels = document.querySelectorAll('ul[class*="inventoryPanel"]');
+    }
+    for (const panel of panels) {
+      const btns = panel.querySelectorAll('button[aria-label]');
+      for (const b of btns) {
+        const lbl = b.getAttribute('aria-label') || '';
+        // aria-label looks like "Stingray Plushie slot 1" — strip the
+        // trailing "slot N" to recover the item name.
+        const m = lbl.match(/^(.+?)\s+slot\s+\d+\s*$/i);
+        if (!m) continue;
+        const name = m[1].trim();
+        if (!name) continue;
+        let id = null;
+        const img = b.querySelector('img[srcset], img[src]');
+        if (img) {
+          const ref = img.getAttribute('srcset') || img.getAttribute('src') || '';
+          const idMatch = ref.match(/\/items\/(\d+)\//);
+          if (idMatch) id = parseInt(idMatch[1], 10);
+        }
+        // Dedup by id (preferred) or normalised name. Multiple slots of
+        // the same item count as one line.
+        const key = id != null ? `id:${id}` : `name:${name.toLowerCase()}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        items.push({ name, id, group: categorizeItem(name) });
+      }
+    }
+    return items;
+  }
+
+  function formatItemList(names) {
+    if (names.length === 0) return '';
+    if (names.length === 1) return names[0];
+    if (names.length === 2) return `${names[0]} and ${names[1]}`;
+    return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+  }
+
+  function pickReturnItemsCommentary(planeSize) {
+    const items = scrapeInventory();
+    const player = S.player || 'Pilot';
+    if (items.length === 0) {
+      return `${player} wonders why they brought no items back to Torn.`;
+    }
+    const weapons = items.filter(i => i.group === 'weapons');
+    const hasWeapons = weapons.length > 0;
+    const pool = [];
+    if (planeSize === 'small') {
+      pool.push(`${player} is happy with their ${formatItemList(items.map(i => i.name))}.`);
+      const ri = items[Math.floor(Math.random() * items.length)];
+      pool.push(`${ri.name} should get a pretty penny back in Torn.`);
+      // Weapons-gated group messages — only fire when weapons are
+      // actually being carried (per spec: "Only print a group message
+      // if the player is carrying an item in the weapons group").
+      if (hasWeapons) {
+        pool.push(`${player} hears their weapons move around in the luggage area.`);
+        const rw = weapons[Math.floor(Math.random() * weapons.length)];
+        pool.push(`Hope those ${rw.name} are secured correctly.`);
+      }
+    } else {
+      pool.push(`${player} stashes their contraband in the overhead locker.`);
+      const ri = items[Math.floor(Math.random() * items.length)];
+      pool.push(`${player} makes themselves comfortable on a stack of ${ri.name}.`);
+      if (hasWeapons) {
+        pool.push('There is a clunk as some weapons shift in the luggage compartment.');
+      }
+    }
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  /* ─────────────────────────────────────────────────────────────
      STATE
   ───────────────────────────────────────────────────────────── */
 
   let S = {
     src:'torn', dst:null, depTime:null, arrTime:null,
     ticket:'standard', player:'Pilot', flying:false, isReturn:false,
-    prevPhase:'', phasesTriggered:{}, turbTriggered:false, halfwayFired:false,
+    prevPhase:'', phasesTriggered:{}, turbTriggered:false, halfwayFired:false, itemsCommFired:false,
     log:[], px:20, py:60, pw:680, ph_panel:520, min:false, page:'main', apiKey:'',
     previewDst:null, inflightSchedule:null, planeScale:100, inflightLogStart:null, diagnostics:null, airportClosed:false, inHospital:false, inJail:false, terrorThreat:false, stateOfEmergency:false, flightHistory:{ samples:[] }, factionName:'', commSchedule:[], commUsedIds:[],
   };
@@ -262,7 +370,7 @@
       GM_setValue('tcfv_v3', JSON.stringify({
         src:S.src, dst:S.dst, depTime:S.depTime, arrTime:S.arrTime,
         ticket:S.ticket, player:S.player, flying:S.flying, isReturn:S.isReturn,
-        prevPhase:S.prevPhase, phasesTriggered:S.phasesTriggered, turbTriggered:S.turbTriggered, halfwayFired:S.halfwayFired,
+        prevPhase:S.prevPhase, phasesTriggered:S.phasesTriggered, turbTriggered:S.turbTriggered, halfwayFired:S.halfwayFired, itemsCommFired:S.itemsCommFired,
         log:S.log.slice(-30), px:S.px, py:S.py, pw:S.pw, ph_panel:S.ph_panel,
         min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale, inflightLogStart:S.inflightLogStart, diagnostics:S.diagnostics, airportClosed:S.airportClosed, inHospital:S.inHospital, inJail:S.inJail, terrorThreat:S.terrorThreat, stateOfEmergency:S.stateOfEmergency, flightHistory:S.flightHistory, factionName:S.factionName, commSchedule:S.commSchedule, commUsedIds:S.commUsedIds,
       }));
@@ -276,6 +384,7 @@
       if (!S.phasesTriggered) S.phasesTriggered = {};
       if (!S.inflightSchedule) S.inflightSchedule = null;
       if (S.halfwayFired === undefined) S.halfwayFired = false;
+      if (S.itemsCommFired === undefined) S.itemsCommFired = false;
       if (!S.planeScale) S.planeScale = 100;
       if (S.inflightLogStart === undefined) S.inflightLogStart = null;
       if (!S.flightHistory || !Array.isArray(S.flightHistory.samples)) S.flightHistory = { samples: [] };
@@ -1081,6 +1190,18 @@ ${dots}
       }
       saveS();
     }
+    // v80.12.0: return-flight items commentary. One message per return
+    // flight, fired between 3% and 10% of total progress. The 3% floor
+    // gives takeoff commentary time to finish (small-plane takeoff
+    // spans ~40s = ~3% of a 23min flight). The 10% ceiling means a
+    // mid-flight refresh won't fire the message late.
+    if (!S.itemsCommFired && S.isReturn && S.flying && progress >= 0.03 && progress <= 0.10) {
+      S.itemsCommFired = true;
+      const small = TICKETS[S.ticket] && TICKETS[S.ticket].size === 'small';
+      const msg = pickReturnItemsCommentary(small ? 'small' : 'large');
+      if (msg) addLog(msg);
+      saveS();
+    }
     if (!S.turbTriggered && (phase === 'inflight' || phase === 'descent') && Math.random() < 0.003) {
       S.turbTriggered = true;
       triggerComm('turbulence', params);
@@ -1172,7 +1293,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 80.11.0</p>
+    <p class="ver-t">Version 80.12.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <p style="margin-top:14px"><a href="https://www.torn.com/forums.php#/p=threads&f=67&t=16558163&b=0&a=0" target="_blank" style="color:#88ddff;text-decoration:underline">Forum link: Bugs, feedback and LIKES welcome!</a></p>
@@ -3402,7 +3523,7 @@ ${dots}
     S.src = sk; S.dst = dk; S.ticket = tk;
     S.depTime = dep; S.arrTime = arr;
     S.flying = true; S.isReturn = isReturn;
-    S.prevPhase = ''; S.phasesTriggered = {}; S.turbTriggered = false; S.halfwayFired = false;
+    S.prevPhase = ''; S.phasesTriggered = {}; S.turbTriggered = false; S.halfwayFired = false; S.itemsCommFired = false;
     turbFired = false;
     S.inflightSchedule = null;
     S.inflightLogStart = null;
