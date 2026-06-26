@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      80.9.0
+// @version      80.10.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1172,7 +1172,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 80.9.0</p>
+    <p class="ver-t">Version 80.10.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <p style="margin-top:14px"><a href="https://www.torn.com/forums.php#/p=threads&f=67&t=16558163&b=0&a=0" target="_blank" style="color:#88ddff;text-decoration:underline">Forum link: Bugs, feedback and LIKES welcome!</a></p>
@@ -3078,14 +3078,62 @@ ${dots}
     const dst = isReturn ? 'torn' : nonTornCity;
     const dur = getDur(src, dst, tk);
     if (dur <= 0) return;
-    // Sanity: remainingMs can't exceed the expected duration by more
-    // than a minute (allow some clock drift).
-    if (remainingMs > dur + 60000) return;
+    // Sanity: 12-hour ceiling on any single flight (was previously gated
+    // on `dur + 60s` which is too tight if BASE_DUR is wrong vs Torn's
+    // actual durations).
+    if (remainingMs > 12 * 3600 * 1000) return;
     const arr = Date.now() + remainingMs;
-    const dep = arr - dur;
-    // Dedup against the current S.flying state.
+    // v80.10.0: three-tier priority for dep. The previous flat formula
+    // `dep = arr - getDur(...)` produced bad plane positions whenever
+    // BASE_DUR didn't match Torn's actual flight durations (Travel 2.0
+    // appears to have changed many of them — Private→Cayman Islands now
+    // ~23 min vs script's hardcoded ~42 min). Use the most accurate
+    // source available instead of always falling back to the table.
+    let dep;
+    let trustClickHandlerDep = false;
+    // (1) User just clicked Fly Now — S.depTime was set within the last
+    // 60 seconds by the click handler. That's the true moment of click,
+    // not an estimate from a duration table.
+    if (S.flying && S.depTime && (Date.now() - S.depTime) < 60000 &&
+        S.src === src && S.dst === dst) {
+      dep = S.depTime;
+      trustClickHandlerDep = true;
+    } else {
+      // (2) factionData has the player's own entry with matching route
+      // and a depTime field. That dep comes directly from Torn's faction
+      // API parse of the member's flight description — no duration-table
+      // guesswork.
+      let fdDep = null;
+      if (S.player) {
+        for (const id of Object.keys(factionData)) {
+          if (id === 'self_player') continue;
+          const m = factionData[id];
+          if (!m || m.name !== S.player) continue;
+          if (m.src === src && m.dst === dst && m.depTime) {
+            fdDep = m.depTime;
+            break;
+          }
+        }
+      }
+      // (3) Fallback: derive dep from the (possibly stale) BASE_DUR
+      // table. Position may be off if Torn's duration differs from the
+      // table, but at least the flight registers.
+      dep = fdDep || (arr - dur);
+    }
+    // Dedup against current S.
     if (S.flying && S.src === src && S.dst === dst && S.arrTime &&
         Math.abs(S.arrTime - arr) < 30000) return;
+    // Recent-click case: just nudge arr in place. A full startFlightTimes
+    // call would reset phasesTriggered + the inflight schedule, and the
+    // takeoff commentary may already be partway through firing — don't
+    // restart that.
+    if (trustClickHandlerDep && S.flying && S.src === src && S.dst === dst) {
+      if (Math.abs(S.arrTime - arr) > 5000) {
+        S.arrTime = arr;
+        saveS();
+      }
+      return;
+    }
     startFlightTimes(src, dst, tk, dep, arr, isReturn);
     // Halfway catch-up to suppress retroactive announcement.
     const total = arr - dep;
