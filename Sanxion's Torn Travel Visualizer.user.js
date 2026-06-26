@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      80.12.0
+// @version      80.13.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -43,10 +43,16 @@
     southafrica: { label:'South Africa', country:'South Africa', city:'Johannesburg', lat:-26.20, lon:28.04, col:'#88ff44' },
   };
 
+  // v80.13.0: Travel 2.0 reduced every flight method's duration by
+  // exactly 5.26% (multiplier 0.9474). Applied uniformly across all
+  // routes. NOTE: even with this reduction the figures here may not
+  // match Torn's actual current durations precisely — the architectural
+  // fix in pickUpFromPage (fresh-start fallback) is the primary
+  // safeguard so plane position is correct regardless.
   const BASE_DUR = {
-    torn_mexico:5400000, torn_caymans:4500000, torn_canada:2700000, torn_hawaii:14400000,
-    torn_uk:10800000, torn_argentina:14400000, torn_switzerland:12600000,
-    torn_japan:25200000, torn_china:25200000, torn_uae:21600000, torn_southafrica:25200000,
+    torn_mexico:5115960, torn_caymans:4263300, torn_canada:2557980, torn_hawaii:13642560,
+    torn_uk:10231920, torn_argentina:13642560, torn_switzerland:11937240,
+    torn_japan:23874480, torn_china:23874480, torn_uae:20463840, torn_southafrica:23874480,
   };
 
   const TICKETS = {
@@ -1293,7 +1299,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 80.12.0</p>
+    <p class="ver-t">Version 80.13.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <p style="margin-top:14px"><a href="https://www.torn.com/forums.php#/p=threads&f=67&t=16558163&b=0&a=0" target="_blank" style="color:#88ddff;text-decoration:underline">Forum link: Bugs, feedback and LIKES welcome!</a></p>
@@ -3250,10 +3256,28 @@ ${dots}
           }
         }
       }
-      // (3) Fallback: derive dep from the (possibly stale) BASE_DUR
-      // table. Position may be off if Torn's duration differs from the
-      // table, but at least the flight registers.
-      dep = fdDep || (arr - dur);
+      if (fdDep) {
+        dep = fdDep;
+      } else if (!S.flying) {
+        // (3) v80.13.0: S was NOT previously flying — this transition
+        // from non-flying to flying was detected purely via page scrape,
+        // which strongly suggests the click handler missed the Fly Now
+        // event (Travel 2.0's redesigned booking DOM doesn't match its
+        // CSS-class detection). Treat as a fresh start: dep = now. The
+        // plane will be drawn at 0% along the path, which is correct
+        // for a just-clicked flight. Far better than (arr - getDur)
+        // which would place it mid-flight when BASE_DUR is stale —
+        // that's what was triggering halfway commentary to fire on
+        // takeoff in v80.12.0 and earlier.
+        dep = Date.now();
+      } else {
+        // (4) Fallback: derive dep from the (possibly stale) BASE_DUR
+        // table. Only used when S was already flying (so this is a
+        // refresh/re-detection of an existing flight) and factionData
+        // didn't have us. Position may be off if Torn's duration
+        // differs from the table, but at least the flight registers.
+        dep = arr - dur;
+      }
     }
     // Dedup against current S.
     if (S.flying && S.src === src && S.dst === dst && S.arrTime &&
