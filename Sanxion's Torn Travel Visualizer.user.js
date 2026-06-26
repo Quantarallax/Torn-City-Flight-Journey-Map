@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      80.13.0
+// @version      80.14.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1299,7 +1299,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 80.13.0</p>
+    <p class="ver-t">Version 80.14.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <p style="margin-top:14px"><a href="https://www.torn.com/forums.php#/p=threads&f=67&t=16558163&b=0&a=0" target="_blank" style="color:#88ddff;text-decoration:underline">Forum link: Bugs, feedback and LIKES welcome!</a></p>
@@ -3094,8 +3094,107 @@ ${dots}
   // returning from). Timing (remaining time) and ticket come from the
   // page. Called from fetchFactionFlights's success path so both data
   // sources are ready.
+  /* ─────────────────────────────────────────────────────────────
+     LANDED-STATE DETECTION  (v80.14.0)
+     If the page shows the user is landed (in Torn or abroad) but
+     S.flying is still true from a previous flight that didn't
+     transition cleanly through the arrived sequence (e.g. page
+     refreshed mid-arrival, or PC2 looking at an old state), force
+     the script to landed. Without this, tick() keeps showing IN
+     FLIGHT with stale altitude/airspeed/ETA values.
+  ───────────────────────────────────────────────────────────── */
+
+  function checkLandedState() {
+    if (!S.flying) return false;
+    let landedCity = null;
+    let isLanded = false;
+    // (1) Travel 2.0: <div id="travel-root" data-model='{"travelStatus":"airborne"}'>
+    // If the attribute exists and travelStatus is NOT "airborne", we
+    // are landed somewhere.
+    const travelRoot = document.querySelector('#travel-root[data-model]');
+    if (travelRoot) {
+      try {
+        const raw = travelRoot.getAttribute('data-model') || '';
+        const model = JSON.parse(raw);
+        if (model && typeof model.travelStatus === 'string' && model.travelStatus !== 'airborne') {
+          isLanded = true;
+        }
+      } catch(e) {}
+    }
+    // (2) Fallback: "You are in [city]" header text without a
+    // "Remaining Flight Time" countdown. Strong signal of landed abroad.
+    const body = document.body && document.body.textContent ? document.body.textContent : '';
+    if (!isLanded && body && !/Remaining\s+Flight\s+Time/i.test(body)) {
+      const youAreIn = body.match(/\byou are in\s+([A-Z][A-Za-z\s]+?)(?:\s+and have|[.!,])/i);
+      if (youAreIn) {
+        const city = matchDest(youAreIn[1]);
+        if (city && city !== 'torn') {
+          isLanded = true;
+          landedCity = city;
+        }
+      }
+    }
+    if (!isLanded) return false;
+    // Determine the city we're landed at. Priority: page header text,
+    // then S.dst (if we were outbound, we're now at that destination),
+    // then S.src as last resort.
+    if (!landedCity) {
+      // Scan visible headers (h1-h4) for a destination name.
+      const heads = document.querySelectorAll('h1, h2, h3, h4');
+      for (let i = 0; i < heads.length; i++) {
+        const t = (heads[i].textContent || '').trim();
+        if (!t || t.length > 40) continue;
+        const c = matchDest(t);
+        if (c && c !== 'torn') { landedCity = c; break; }
+      }
+    }
+    if (!landedCity) {
+      if (S.dst && S.dst !== 'torn') landedCity = S.dst;
+      else if (S.src && S.src !== 'torn') landedCity = S.src;
+      else landedCity = 'torn';
+    }
+    forceLandedState(landedCity);
+    return true;
+  }
+
+  function forceLandedState(city) {
+    // Mirror the cleanup that the arrived-sequence does at the end of
+    // a successful flight, but without the arrival commentary (the user
+    // already landed; we're just catching up to that reality).
+    S.flying = false;
+    S.src = city;
+    S.dst = null;
+    S.depTime = null;
+    S.arrTime = null;
+    S.phasesTriggered = {};
+    S.inflightSchedule = null;
+    S.commSchedule = [];
+    S.commUsedIds = [];
+    S.halfwayFired = false;
+    S.itemsCommFired = false;
+    S.turbTriggered = false;
+    saveS();
+    // Visual reset: clear flight path, draw the plane at the landed
+    // city, highlight that city only, blank out instrument readings.
+    if (el.svg) {
+      drawPath(null, null);
+      drawPlane(0, city, city);
+      highlightDots(city, null);
+    }
+    updateStats(0, 0);
+  }
+
   function pickUpFromPage() {
     if (!document.body) return;
+    // v80.14.0: detect landed state BEFORE attempting flight detection.
+    // If the page tells us we're landed (Travel 2.0 data-model
+    // travelStatus != airborne, or "You are in [city]" without a flight
+    // countdown), force S to landed and bail. Prevents stale S.flying
+    // state from a prior flight that didn't transition through the
+    // arrived sequence — which was making tick() continue to show IN
+    // FLIGHT with phantom altitude/airspeed/ETA values on the landed
+    // page.
+    if (checkLandedState()) return;
     const body = document.body.textContent || '';
     // v70.44.0: Torn's page shows return flights as "[departure city] to
     // Torn" (e.g. "Mexico to Torn", "South Africa to Torn City") — not
@@ -3258,24 +3357,29 @@ ${dots}
       }
       if (fdDep) {
         dep = fdDep;
-      } else if (!S.flying) {
-        // (3) v80.13.0: S was NOT previously flying — this transition
-        // from non-flying to flying was detected purely via page scrape,
-        // which strongly suggests the click handler missed the Fly Now
-        // event (Travel 2.0's redesigned booking DOM doesn't match its
-        // CSS-class detection). Treat as a fresh start: dep = now. The
-        // plane will be drawn at 0% along the path, which is correct
-        // for a just-clicked flight. Far better than (arr - getDur)
-        // which would place it mid-flight when BASE_DUR is stale —
-        // that's what was triggering halfway commentary to fire on
-        // takeoff in v80.12.0 and earlier.
+      } else if (!S.flying || S.src !== src || S.dst !== dst ||
+                 (S.arrTime && S.arrTime < Date.now() - 60000)) {
+        // (3) v80.14.0 (broadened from v80.13.0): fresh-start fallback.
+        // Fires when ANY of:
+        //  - S was not previously flying (click handler missed the
+        //    Fly Now event due to Travel 2.0 DOM changes), OR
+        //  - S was flying but the route doesn't match what the page
+        //    now says (different flight — previous flight ended
+        //    without proper state cleanup), OR
+        //  - S was flying but the previous arrTime is more than 60s
+        //    in the past (stale state that should have transitioned
+        //    to landed long ago).
+        // In all of these, treat as a fresh start: dep = now. The plane
+        // will be drawn at 0% along the path, which is correct for a
+        // just-clicked flight and is the safest answer for the stale
+        // cases (better than placing it at a random position computed
+        // from a wrong BASE_DUR value).
         dep = Date.now();
       } else {
         // (4) Fallback: derive dep from the (possibly stale) BASE_DUR
-        // table. Only used when S was already flying (so this is a
-        // refresh/re-detection of an existing flight) and factionData
-        // didn't have us. Position may be off if Torn's duration
-        // differs from the table, but at least the flight registers.
+        // table. Only reached when S was already flying with the right
+        // route and a still-future arrTime, and factionData didn't have
+        // us — i.e. an active flight being re-detected.
         dep = arr - dur;
       }
     }
