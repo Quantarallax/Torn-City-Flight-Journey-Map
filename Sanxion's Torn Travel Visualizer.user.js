@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      80.10.0
+// @version      80.11.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1172,7 +1172,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 80.10.0</p>
+    <p class="ver-t">Version 80.11.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <p style="margin-top:14px"><a href="https://www.torn.com/forums.php#/p=threads&f=67&t=16558163&b=0&a=0" target="_blank" style="color:#88ddff;text-decoration:underline">Forum link: Bugs, feedback and LIKES welcome!</a></p>
@@ -3065,13 +3065,27 @@ ${dots}
       }
     }
     if (remainingMs <= 0) return;
-    // Ticket from page. Scan for ticket labels; fall back to S.ticket.
+    // v80.11.0: ticket detection from page.
+    // Previously iterated in object-key order (standard → business →
+    // private → airstrip) and stopped at the first \bLabel\b match. That
+    // false-positives whenever the page contains the word "Standard" in
+    // unrelated text (tooltips, sidebar copy, "standard procedures"
+    // etc.) before any genuine flight ticket label. Sort by label length
+    // DESC so the more specific multi-word labels ("Business Class",
+    // "Private Plane") match before the single-word ones.
     let tk = S.ticket || 'standard';
-    for (const k of Object.keys(TICKETS)) {
+    let pageMatchedTicket = false;
+    const ticketKeysByLabelLen = Object.keys(TICKETS).sort((a, b) =>
+      (TICKETS[b].label || '').length - (TICKETS[a].label || '').length);
+    for (const k of ticketKeysByLabelLen) {
       const lbl = TICKETS[k].label;
       if (!lbl) continue;
       const safe = lbl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
-      if (new RegExp(`\\b${safe}\\b`, 'i').test(body)) { tk = k; break; }
+      if (new RegExp(`\\b${safe}\\b`, 'i').test(body)) {
+        tk = k;
+        pageMatchedTicket = true;
+        break;
+      }
     }
     // Build src/dst + dep/arr.
     const src = isReturn ? nonTornCity : 'torn';
@@ -3126,12 +3140,30 @@ ${dots}
     // Recent-click case: just nudge arr in place. A full startFlightTimes
     // call would reset phasesTriggered + the inflight schedule, and the
     // takeoff commentary may already be partway through firing — don't
-    // restart that.
+    // restart that. But DO accept a page-confirmed ticket change: the
+    // click handler may have defaulted to the wrong ticket if Travel
+    // 2.0's new DOM/CSS classes broke its detection. A confirmed page
+    // label is more authoritative than a click-handler fallback.
     if (trustClickHandlerDep && S.flying && S.src === src && S.dst === dst) {
+      let dirty = false;
       if (Math.abs(S.arrTime - arr) > 5000) {
         S.arrTime = arr;
-        saveS();
+        dirty = true;
       }
+      if (pageMatchedTicket && tk && tk !== S.ticket) {
+        S.ticket = tk;
+        dirty = true;
+        // Force the plane sprite to refresh immediately. drawPlane reads
+        // S.ticket so the next call after this gets the correct shape.
+        if (S.src && S.dst) {
+          const total = arr - S.depTime;
+          const elapsed = Date.now() - S.depTime;
+          const prog = total > 0 ? Math.max(0, Math.min(1, elapsed / total)) : 0;
+          drawPlane(prog, S.src, S.dst);
+        }
+        if (el.tkt) el.tkt.textContent = (TICKETS[tk] && TICKETS[tk].label) || tk;
+      }
+      if (dirty) saveS();
       return;
     }
     startFlightTimes(src, dst, tk, dep, arr, isReturn);
