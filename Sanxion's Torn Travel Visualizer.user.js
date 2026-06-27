@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      80.14.0
+// @version      80.15.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1299,7 +1299,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 80.14.0</p>
+    <p class="ver-t">Version 80.15.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <p style="margin-top:14px"><a href="https://www.torn.com/forums.php#/p=threads&f=67&t=16558163&b=0&a=0" target="_blank" style="color:#88ddff;text-decoration:underline">Forum link: Bugs, feedback and LIKES welcome!</a></p>
@@ -2947,12 +2947,31 @@ ${dots}
     return matchDest(text);
   }
 
+  // v80.15.0: matchTicket — REWRITTEN. The previous version had two
+  // bugs that combined to corrupt S.ticket on return flights:
+  //   (a) `t.includes('private plane') → 'airstrip'` collided with
+  //       TICKETS['private'].label = 'Private Plane', so the Torn UI's
+  //       Private-ticket button was misread as Airstrip on every
+  //       click. Stats/altitude/fuel then rendered as Airstrip values.
+  //   (b) Defaulted to 'standard' on any unrecognised text, so the
+  //       click handler's broad class filter (cls.includes('class')
+  //       fires on lots of Travel 2.0 CSS-module classes) silently
+  //       overwrote S.ticket to 'standard' on countless unrelated
+  //       clicks. With S.ticket !== 'standard' as the guard, the
+  //       mismatch was always real, so the write always landed.
+  // Fix: check the more specific keyword 'airstrip' first, then
+  // 'business', then 'private' (covers "Private", "Private Plane",
+  // "Private Jet" — all map to the private ticket per TICKETS table),
+  // then 'standard'/'jumbo'. Return null when nothing matches so
+  // callers can keep S.ticket as-is.
   function matchTicket(text) {
     const t = (text || '').toLowerCase();
-    if (t.includes('private') && t.includes('jet')) return 'private';
-    if (t.includes('airstrip') || t.includes('private plane')) return 'airstrip';
+    if (!t) return null;
+    if (t.includes('airstrip')) return 'airstrip';
     if (t.includes('business')) return 'business';
-    return 'standard';
+    if (t.includes('private')) return 'private';
+    if (t.includes('standard') || t.includes('jumbo')) return 'standard';
+    return null;
   }
 
   function readSelectedDest() {
@@ -3006,7 +3025,13 @@ ${dots}
         }
         if (cls.includes('ticket') || cls.includes('class') || cls.includes('method') || cls.includes('airstrip')) {
           const tk = matchTicket(t.textContent);
-          if (S.ticket !== tk) {
+          // v80.15.0: only update when matchTicket returned a real
+          // value. Previously matchTicket defaulted to 'standard', so
+          // any element with a matching broad class (and Travel 2.0
+          // CSS-module classes contain 'class' liberally) would
+          // overwrite S.ticket to 'standard'. Now null means "couldn't
+          // identify a ticket from this click" — leave S.ticket alone.
+          if (tk && S.ticket !== tk) {
             S.ticket = tk;
             if (el.tkt) el.tkt.textContent = TICKETS[tk]?.label || tk;
             if (S.previewDst && !S.flying) {
