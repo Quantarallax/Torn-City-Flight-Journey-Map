@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      80.15.0
+// @version      81.0.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1299,7 +1299,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 80.15.0</p>
+    <p class="ver-t">Version 81.0.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <p style="margin-top:14px"><a href="https://www.torn.com/forums.php#/p=threads&f=67&t=16558163&b=0&a=0" target="_blank" style="color:#88ddff;text-decoration:underline">Forum link: Bugs, feedback and LIKES welcome!</a></p>
@@ -2989,13 +2989,30 @@ ${dots}
   }
 
   function readSelectedTicket() {
+    // v81.0.0: gated on !S.flying — ticket selection is a pre-flight
+    // action; once airborne, the ticket is locked in. Querying the DOM
+    // for "selected ticket" mid-flight can only return stale or
+    // unrelated state (e.g. a sidebar element with activeClass + text
+    // containing "Standard"), which was causing S.ticket to flip
+    // mid-flight as Torn's React layer re-rendered.
+    if (S.flying) return null;
+    // Tighter selector list. The previous v80.x version included
+    // [class*="class"][class*="active"], which matched any element with
+    // a class string containing both "class" and "active" — extremely
+    // common in CSS-module React apps where classes like activeClass___xyz,
+    // currentClass___xyz, wrapperClass___xyz appear throughout the DOM.
+    // That selector was the primary false-positive source. Removed.
     const sels = [
-      '[class*="ticket"][class*="active"]', '[class*="class"][class*="active"]',
-      '[class*="method"][class*="active"]', '[class*="travel-method"][class*="active"]',
+      '[class*="ticket"][class*="active"]',
+      '[class*="travel-method"][class*="active"]',
+      '[class*="travelMethod"][class*="active"]',
     ];
     for (const sel of sels) {
       const found = document.querySelector(sel);
-      if (found) return matchTicket(found.textContent);
+      if (found) {
+        const tk = matchTicket(found.textContent);
+        if (tk) return tk;
+      }
     }
     return null;
   }
@@ -3023,7 +3040,16 @@ ${dots}
           const dm = matchDest(t.textContent);
           if (dm && dm !== S.src) { previewDest(dm); }
         }
-        if (cls.includes('ticket') || cls.includes('class') || cls.includes('method') || cls.includes('airstrip')) {
+        // v81.0.0: gated on !S.flying. Ticket selection only happens
+        // before takeoff; once airborne, no click anywhere should flip
+        // S.ticket. The cls.includes('class') filter is broad enough to
+        // catch unrelated Travel 2.0 React elements with classes like
+        // activeClass___xyz, and if such an element happens to contain
+        // text matching a ticket keyword (very common), matchTicket
+        // would return that ticket and the write would land mid-flight.
+        // Removing the in-flight write path eliminates the entire class
+        // of mid-flight ticket-flipping bugs.
+        if (!S.flying && (cls.includes('ticket') || cls.includes('class') || cls.includes('method') || cls.includes('airstrip'))) {
           const tk = matchTicket(t.textContent);
           // v80.15.0: only update when matchTicket returned a real
           // value. Previously matchTicket defaulted to 'standard', so
@@ -3502,15 +3528,24 @@ ${dots}
           // doesn't block flight detection. tick() now also defers to
           // S.flying when deciding whether to apply race closure.
         }
-        const tk = readSelectedTicket();
-        if (tk && tk !== S.ticket) {
-          S.ticket = tk;
-          if (el.tkt) el.tkt.textContent = TICKETS[tk]?.label || tk;
-          if (S.previewDst && !S.flying) {
-            drawPath(S.src, S.previewDst);
-            updateStats(0, 0);
+        // v81.0.0: gated on !S.flying. readSelectedTicket() is also
+        // internally gated, but explicit at the call site avoids the
+        // redundant DOM query and the followed-up render/save work.
+        // Mutation observers fire on EVERY DOM change including idle
+        // Torn-side React re-renders, so an unguarded write here was
+        // the primary mechanism by which S.ticket flipped during
+        // airborne state.
+        if (!S.flying) {
+          const tk = readSelectedTicket();
+          if (tk && tk !== S.ticket) {
+            S.ticket = tk;
+            if (el.tkt) el.tkt.textContent = TICKETS[tk]?.label || tk;
+            if (S.previewDst) {
+              drawPath(S.src, S.previewDst);
+              updateStats(0, 0);
+            }
+            saveS();
           }
-          saveS();
         }
         if (!S.flying) {
           const body = document.body.textContent;
