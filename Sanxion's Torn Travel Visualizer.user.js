@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      81.3.1
+// @version      81.4.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -533,16 +533,22 @@
     return h > 0 ? `${h}h ${String(m).padStart(2,'0')}m` : m > 0 ? `${m}m ${String(ss).padStart(2,'0')}s` : `${ss}s`;
   };
 
-  function getZoomedViewBox(sk, dk) {
+  function getZoomedViewBox(sk, dk, tight) {
     if (!sk || !dk) return `0 0 ${MAP_W} ${MAP_H}`;
     const s = toXY(DESTS[sk].lon, DESTS[sk].lat);
     const d = toXY(DESTS[dk].lon, DESTS[dk].lat);
     const routeW = Math.abs(d.x - s.x);
     const routeH = Math.abs(d.y - s.y);
     const routeSpan = Math.sqrt(routeW * routeW + routeH * routeH);
-    const minSpan = 120;
+    // v81.4.0: tight mode for highlighted faction flights — spec
+    // requires the route to fill as much of the window as possible.
+    // Drops padding from 35% to 12% of the route span and tightens
+    // the absolute minimum padding floor from 40 to 15.
+    const minSpan = tight ? 100 : 120;
     const effectiveSpan = Math.max(routeSpan, minSpan);
-    const pad = Math.max(40, effectiveSpan * 0.35);
+    const padPct = tight ? 0.12 : 0.35;
+    const padFloor = tight ? 15 : 40;
+    const pad = Math.max(padFloor, effectiveSpan * padPct);
     let minX = Math.min(s.x, d.x) - pad;
     let maxX = Math.max(s.x, d.x) + pad;
     let minY = Math.min(s.y, d.y) - pad;
@@ -551,7 +557,7 @@
     minY = Math.max(0, minY);
     maxX = Math.min(MAP_W, maxX);
     maxY = Math.min(MAP_H, maxY);
-    const MIN_VW = 160;
+    const MIN_VW = tight ? 120 : 160;
     if (maxX - minX < MIN_VW) {
       const cx = (minX + maxX) / 2;
       minX = Math.max(0, cx - MIN_VW / 2);
@@ -1402,7 +1408,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 81.3.1</p>
+    <p class="ver-t">Version 81.4.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <p style="margin-top:14px"><a href="https://www.torn.com/forums.php#/p=threads&f=67&t=16558163&b=0&a=0" target="_blank" style="color:#88ddff;text-decoration:underline">Forum link: Bugs, feedback and LIKES welcome!</a></p>
@@ -2471,9 +2477,20 @@ ${dots}
       };
       const ang = tangentDeg + 90;
       const sw = '1.2';
-      const sc = '0.98';
+      // v81.4.0: per-plane-type scale normalisation + 25% boost.
+      // Spec: "On the faction flyer screen, in normal view, it should
+      // make the plane images 25% bigger, if the size of each plane
+      // is different it should make them all as close as possible in
+      // size." The three sprite shapes have different bounding
+      // circles (jumbo widest at ~8.2 SVG units, private jet ~7.07,
+      // prop plane ~6.36). Normalising scales: jumbo 1.0 (reference),
+      // private_plane 1.16, prop_plane 1.29 — brings them all close
+      // to the same on-screen size. Then × 1.25 per the spec boost.
+      const PLANE_SIZE_NORM = { jumbo: 1.0, private_plane: 1.16, prop_plane: 1.29 };
       const ticket = matchFactionTicket(m.method);
       const plane = TICKETS[ticket]?.plane || 'jumbo';
+      const sizeNorm = PLANE_SIZE_NORM[plane] || 1.0;
+      const sc = (0.98 * sizeNorm * 1.25).toFixed(3);
       let shape;
       if (plane === 'jumbo') {
         shape = `<ellipse cx="0" cy="0" rx="1.5" ry="4.5" fill="white" stroke="black" stroke-width="0.8"/>
@@ -3016,7 +3033,10 @@ ${dots}
     if (highlightedFactionId !== null && factionData[highlightedFactionId]) {
       const hm = factionData[highlightedFactionId];
       if (hm.src && hm.dst && DESTS[hm.src] && DESTS[hm.dst]) {
-        const vb = getZoomedViewBox(hm.src, hm.dst);
+        // v81.4.0: HIGHLIGHT A FACTION FLIGHT spec rule — "fill the
+        // window with start and destination (to use up as much screen
+        // as possible)". Pass tight=true for minimal padding.
+        const vb = getZoomedViewBox(hm.src, hm.dst, true);
         el.svg.setAttribute('viewBox', vb);
         currentZoom = MAP_W / parseFloat(vb.split(' ')[2]);
         return;
