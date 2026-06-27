@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      81.3.0
+// @version      81.3.1
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -1402,7 +1402,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 81.3.0</p>
+    <p class="ver-t">Version 81.3.1</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <p style="margin-top:14px"><a href="https://www.torn.com/forums.php#/p=threads&f=67&t=16558163&b=0&a=0" target="_blank" style="color:#88ddff;text-decoration:underline">Forum link: Bugs, feedback and LIKES welcome!</a></p>
@@ -2629,10 +2629,22 @@ ${dots}
   // already exists (matched by `until`) or if a fetch for this id is
   // already in flight.
   function queuePlaneTypeFetch(memberId, until) {
-    if (!memberId || !until) return;
-    if (planeTypeFetchInFlight.has(memberId)) return;
+    // v81.3.1: accept stUntil=0 (= API returned null) as a valid cache
+    // key. Previously `!until` rejected zero outright, so members
+    // whose status.until was null never got their fetch queued at all
+    // — the fetch only fired for members with non-null until values.
+    // 0 is a stable, equality-comparable value across polls, so it
+    // works fine as a cache key.
+    if (!memberId) return;
+    if (planeTypeFetchInFlight.has(memberId)) {
+      try { console.log(`[TCFV faction] queue skip id=${memberId} reason=in-flight`); } catch(e) {}
+      return;
+    }
     const cached = factionPlaneTypeCache[memberId];
-    if (cached && cached.until === until && cached.planeImageType) return;
+    if (cached && cached.until === until && cached.planeImageType) {
+      try { console.log(`[TCFV faction] queue skip id=${memberId} reason=cache-hit type=${cached.planeImageType}`); } catch(e) {}
+      return;
+    }
     // De-dupe queued entries — replace any stale queued request for the
     // same id so we always fetch against the latest `until`.
     for (let i = planeTypeFetchQueue.length - 1; i >= 0; i--) {
@@ -2641,6 +2653,7 @@ ${dots}
       }
     }
     planeTypeFetchQueue.push({ memberId, until });
+    try { console.log(`[TCFV faction] queue add id=${memberId} until=${until || 'null'} (queue depth ${planeTypeFetchQueue.length})`); } catch(e) {}
     processPlaneTypeFetchQueue();
   }
 
@@ -2650,23 +2663,46 @@ ${dots}
     planeTypeFetchBusy = true;
     const { memberId, until } = planeTypeFetchQueue.shift();
     planeTypeFetchInFlight.add(memberId);
+    const url = `https://api.torn.com/v2/user/${memberId}/basic?striptags=true&key=${S.apiKey}`;
+    try { console.log(`[TCFV faction] fetch start id=${memberId} url=https://api.torn.com/v2/user/${memberId}/basic?striptags=true&key=<redacted>`); } catch(e) {}
     GM_xmlhttpRequest({
       method: 'GET',
-      url: `https://api.torn.com/v2/user/${memberId}/basic?striptags=true&key=${S.apiKey}`,
+      url: url,
       onload: r => {
         try {
           const data = JSON.parse(r.responseText);
+          const profile = data && data.profile;
+          const status = profile && profile.status;
+          const pit = status && status.plane_image_type;
+          try {
+            console.log(
+              `[TCFV faction] fetch done id=${memberId} ` +
+              `profile.id=${profile ? profile.id : 'n/a'} ` +
+              `profile.name=${profile ? profile.name : 'n/a'} ` +
+              `state=${status ? status.state : 'n/a'} ` +
+              `until=${status ? status.until : 'n/a'} ` +
+              `plane_image_type=${pit || 'n/a'}`
+            );
+          } catch(e) {}
           // data.profile.status.plane_image_type — only present while
           // the member is actively traveling. If they've landed since
           // we queued the fetch, the field will be absent; skip the
           // cache write in that case.
-          if (data && data.profile && data.profile.status && data.profile.status.plane_image_type) {
+          if (pit) {
             factionPlaneTypeCache[memberId] = {
-              planeImageType: data.profile.status.plane_image_type,
+              planeImageType: pit,
               until: until,
             };
             S.factionPlaneTypeCache = factionPlaneTypeCache;
             saveS();
+            // v81.3.1: log resolved ticket / sprite for visibility.
+            try {
+              const tk = planeImageTypeToTicket(pit);
+              const tkDetail = tk && TICKETS[tk]
+                ? `ticket=${tk} label=${TICKETS[tk].label} plane=${TICKETS[tk].plane} size=${TICKETS[tk].size}`
+                : `ticket=null (UNMAPPED — please report)`;
+              console.log(`[TCFV faction] cache write id=${memberId} type=${pit} until=${until || 'null'} → ${tkDetail}`);
+            } catch(e) {}
             // Trigger a redraw so the corrected sprite / icon appears
             // immediately rather than waiting for the next 60s poll.
             if (factionFlightsOn) {
@@ -2674,7 +2710,9 @@ ${dots}
               try { renderFactionRoster(); } catch(e) {}
             }
           }
-        } catch(e) {}
+        } catch(e) {
+          try { console.log(`[TCFV faction] fetch parse error id=${memberId} err=${e && e.message}`); } catch(e2) {}
+        }
         planeTypeFetchInFlight.delete(memberId);
         planeTypeFetchBusy = false;
         // ~3 fetches/sec — well under the 100/min API limit even when
@@ -2682,6 +2720,7 @@ ${dots}
         setTimeout(processPlaneTypeFetchQueue, 350);
       },
       onerror: () => {
+        try { console.log(`[TCFV faction] fetch transport error id=${memberId}`); } catch(e) {}
         planeTypeFetchInFlight.delete(memberId);
         planeTypeFetchBusy = false;
         // Back off harder on transport errors.
@@ -2741,35 +2780,58 @@ ${dots}
                 const estDur = BASE_DUR[routeK] || BASE_DUR['torn_' + dk3] || 18000000;
                 const stUntil = (st && st.until) ? st.until * 1000 : 0;
                 const arrTime3 = stUntil > Date.now() ? stUntil : (Date.now() + estDur / 2);
-                // v81.2.0: prefer the authoritative plane_image_type
-                // from the per-member basic-profile API call when
-                // available. Falls back to the v81.1.0 duration-based
-                // deduction (factionMethodCache) when the fetch hasn't
-                // returned yet — that provides immediate visual feedback
-                // at takeoff while the API call is in flight. Both
-                // caches are keyed by member id and validated by `until`.
+                // v81.3.1: cache validity uses stUntil (the raw API
+                // value) rather than arrTime3 (computed with a
+                // Date.now()-based fallback when stUntil is null/0).
+                // Previously, whenever the API returned `until: null`
+                // for an active flight — which the spec example shows
+                // it does for at least some members — arrTime3 would
+                // differ on every poll because Date.now() kept
+                // advancing, and the cache validity check
+                // `cached.until === arrTime3` was always false. Cache
+                // never hit, every member rendered as Standard.
+                // stUntil stays constant across polls (it's just
+                // st.until*1000 or 0), so equality holds.
                 const ptCached = factionPlaneTypeCache[memberId];
                 const methCached = factionMethodCache[memberId];
                 let methodFinal = 'Standard';
                 let multFinal = 1.0;
-                if (ptCached && ptCached.until === arrTime3 && ptCached.planeImageType) {
+                let cacheSource = 'default';
+                if (ptCached && ptCached.until === stUntil && ptCached.planeImageType) {
                   const tk = planeImageTypeToTicket(ptCached.planeImageType);
                   if (tk && TICKETS[tk]) {
                     methodFinal = TICKETS[tk].label || 'Standard';
                     multFinal = TICKETS[tk].mult || 1.0;
+                    cacheSource = `plane_image_type=${ptCached.planeImageType}`;
+                  } else {
+                    cacheSource = `plane_image_type=${ptCached.planeImageType} (UNMAPPED — kept Standard)`;
                   }
-                } else if (methCached && methCached.until === arrTime3 && methCached.method) {
+                } else if (methCached && methCached.until === stUntil && methCached.method) {
                   methodFinal = methCached.method;
                   const tk = matchFactionTicket(methodFinal);
                   multFinal = TICKETS[tk] && TICKETS[tk].mult ? TICKETS[tk].mult : 1.0;
+                  cacheSource = `duration-deduced=${methodFinal}`;
                 }
                 const depTime3 = arrTime3 - (estDur / multFinal);
                 factionData[memberId] = { name: membName, src: srcFinal, dst: dk3, depTime: depTime3, arrTime: arrTime3, method: methodFinal };
+                // v81.3.1: log the match for each flying member so the
+                // user can see in DevTools whether the join is working.
+                try {
+                  console.log(
+                    `[TCFV faction] member id=${memberId} name=${membName} route=${srcFinal}→${dk3} ` +
+                    `stUntil=${stUntil || 'null'} ptCache=${ptCached ? 'HIT(' + ptCached.planeImageType + ', until=' + ptCached.until + ')' : 'miss'} ` +
+                    `methCache=${methCached ? 'HIT(' + methCached.method + ', until=' + methCached.until + ')' : 'miss'} ` +
+                    `→ method=${methodFinal} mult=${multFinal} source=${cacheSource}`
+                  );
+                } catch(e) {}
                 // v81.2.0: queue a plane-type fetch if we don't have a
                 // fresh authoritative entry. queuePlaneTypeFetch
                 // self-skips on cache hit and on already-in-flight, so
                 // this is a cheap no-op when nothing's needed.
-                queuePlaneTypeFetch(memberId, arrTime3);
+                // v81.3.1: pass stUntil (raw API value) so the cache
+                // entry's `until` matches what the next poll's parser
+                // compares against.
+                queuePlaneTypeFetch(memberId, stUntil);
               }
               continue;
             }
@@ -2902,6 +2964,23 @@ ${dots}
             if (m) prevFactionFlying[id] = { name: m.name, dst: m.dst };
           }
           factionFirstPollDone = true;
+          // v81.3.1: summary of the poll for diagnosing what the join
+          // pipeline is doing. Counts flying members, abroad members,
+          // and the cache hit rate.
+          try {
+            const cacheStats = currentFlyingIds.size
+              ? Array.from(currentFlyingIds).reduce((acc, id) => {
+                  const c = factionPlaneTypeCache[id];
+                  if (c && c.planeImageType) acc.hit += 1;
+                  else acc.miss += 1;
+                  return acc;
+                }, { hit: 0, miss: 0 })
+              : { hit: 0, miss: 0 };
+            console.log(
+              `[TCFV faction] poll done: flying=${currentFlyingIds.size} abroad=${Object.keys(factionAbroad).length} ` +
+              `total=${Object.keys(factionAllMembers).length} cache hits=${cacheStats.hit}/${currentFlyingIds.size}`
+            );
+          } catch(e) {}
           // Only redraw the faction map/zoom/roster when faction view is on.
           if (factionFlightsOn) {
             drawFactionFlights();
