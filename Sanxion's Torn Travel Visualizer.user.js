@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      81.0.0
+// @version      81.3.0
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -286,8 +286,11 @@
     // suffixes (e.g. `inventoryPanel___myfES`) that change between Torn
     // deploys, so anchor on the aria-label first; fall back to a class
     // prefix selector if aria-label is missing.
-    const items = [];
-    const seen = new Set();
+    // v81.2.1: track per-item count so the commentary can pluralise
+    // ("Shark Fins" when carrying 5, "Shark Fin" when carrying 1).
+    // Previously the same-id seen-set silently collapsed all stacks to
+    // a single entry, losing the plural information entirely.
+    const byKey = new Map();
     let panels = document.querySelectorAll('ul[aria-label^="Inventory" i]');
     if (panels.length === 0) {
       panels = document.querySelectorAll('ul[class*="inventoryPanel"]');
@@ -309,22 +312,52 @@
           const idMatch = ref.match(/\/items\/(\d+)\//);
           if (idMatch) id = parseInt(idMatch[1], 10);
         }
-        // Dedup by id (preferred) or normalised name. Multiple slots of
-        // the same item count as one line.
         const key = id != null ? `id:${id}` : `name:${name.toLowerCase()}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        items.push({ name, id, group: categorizeItem(name) });
+        const existing = byKey.get(key);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          byKey.set(key, { name, id, group: categorizeItem(name), count: 1 });
+        }
       }
     }
-    return items;
+    return Array.from(byKey.values());
   }
 
-  function formatItemList(names) {
-    if (names.length === 0) return '';
-    if (names.length === 1) return names[0];
-    if (names.length === 2) return `${names[0]} and ${names[1]}`;
-    return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+  // v81.2.1: basic English pluralisation, sufficient for the vast
+  // majority of Torn item names (most are simple nouns: Hammer/Knife/
+  // Pistol/Orchid/Shark Fin/etc.). Rules:
+  //   - already ends in s/x/z/ch/sh → +"es" (Box → Boxes, Axe → Axes
+  //     handled by base 's' rule since 'e' isn't in the list)
+  //   - consonant + y → "ies" (Cherry → Cherries)
+  //   - 'fe' / consonant + 'f' → "ves" (Knife → Knives, Loaf → Loaves)
+  //   - otherwise → +"s"
+  // If Torn ships an item the rules don't cover well, the worst case
+  // is a slightly awkward plural — the commentary still reads.
+  function pluralize(name) {
+    if (!name) return name;
+    if (/(s|x|z|ch|sh)$/i.test(name)) return name + 'es';
+    if (/[bcdfghjklmnpqrstvwxz]y$/i.test(name)) return name.slice(0, -1) + 'ies';
+    if (/fe$/i.test(name)) return name.slice(0, -2) + 'ves';
+    if (/[bcdfghjklmnpqrstvwxz]f$/i.test(name)) return name.slice(0, -1) + 'ves';
+    return name + 's';
+  }
+
+  function formatItemList(items) {
+    // v81.2.1: accepts items array of { name, count } and pluralises
+    // per-entry. Previously took a flat names array, which had no way
+    // to express "I'm carrying 5 of this" — so multiples appeared
+    // as singulars.
+    if (!items || items.length === 0) return '';
+    const labels = items.map(it => {
+      if (!it) return '';
+      if (typeof it === 'string') return it;
+      const cnt = it.count || 1;
+      return cnt > 1 ? pluralize(it.name) : it.name;
+    });
+    if (labels.length === 1) return labels[0];
+    if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
+    return labels.slice(0, -1).join(', ') + ' and ' + labels[labels.length - 1];
   }
 
   function pickReturnItemsCommentary(planeSize) {
@@ -336,22 +369,28 @@
     const weapons = items.filter(i => i.group === 'weapons');
     const hasWeapons = weapons.length > 0;
     const pool = [];
+    // v81.2.1: pass items (not names) so formatItemList can pluralise
+    // per entry based on its count.
+    const labelOf = (it) => (it.count > 1 ? pluralize(it.name) : it.name);
     if (planeSize === 'small') {
-      pool.push(`${player} is happy with their ${formatItemList(items.map(i => i.name))}.`);
+      pool.push(`${player} is happy with their ${formatItemList(items)}.`);
       const ri = items[Math.floor(Math.random() * items.length)];
-      pool.push(`${ri.name} should get a pretty penny back in Torn.`);
+      pool.push(`${labelOf(ri)} should get a pretty penny back in Torn.`);
       // Weapons-gated group messages — only fire when weapons are
       // actually being carried (per spec: "Only print a group message
       // if the player is carrying an item in the weapons group").
       if (hasWeapons) {
         pool.push(`${player} hears their weapons move around in the luggage area.`);
         const rw = weapons[Math.floor(Math.random() * weapons.length)];
-        pool.push(`Hope those ${rw.name} are secured correctly.`);
+        // "Hope those X are secured correctly" — "those" implies
+        // plural, so always pluralise the weapon name here regardless
+        // of how many the player is actually carrying.
+        pool.push(`Hope those ${pluralize(rw.name)} are secured correctly.`);
       }
     } else {
       pool.push(`${player} stashes their contraband in the overhead locker.`);
       const ri = items[Math.floor(Math.random() * items.length)];
-      pool.push(`${player} makes themselves comfortable on a stack of ${ri.name}.`);
+      pool.push(`${player} makes themselves comfortable on a stack of ${pluralize(ri.name)}.`);
       if (hasWeapons) {
         pool.push('There is a clunk as some weapons shift in the luggage compartment.');
       }
@@ -368,7 +407,7 @@
     ticket:'standard', player:'Pilot', flying:false, isReturn:false,
     prevPhase:'', phasesTriggered:{}, turbTriggered:false, halfwayFired:false, itemsCommFired:false,
     log:[], px:20, py:60, pw:680, ph_panel:520, min:false, page:'main', apiKey:'',
-    previewDst:null, inflightSchedule:null, planeScale:100, inflightLogStart:null, diagnostics:null, airportClosed:false, inHospital:false, inJail:false, terrorThreat:false, stateOfEmergency:false, flightHistory:{ samples:[] }, factionName:'', commSchedule:[], commUsedIds:[],
+    previewDst:null, inflightSchedule:null, planeScale:100, inflightLogStart:null, landedLogStart:null, diagnostics:null, airportClosed:false, inHospital:false, inJail:false, terrorThreat:false, stateOfEmergency:false, flightHistory:{ samples:[] }, factionName:'', commSchedule:[], commUsedIds:[], factionMethodCache:{}, factionPlaneTypeCache:{},
   };
 
   const saveS = () => {
@@ -378,7 +417,7 @@
         ticket:S.ticket, player:S.player, flying:S.flying, isReturn:S.isReturn,
         prevPhase:S.prevPhase, phasesTriggered:S.phasesTriggered, turbTriggered:S.turbTriggered, halfwayFired:S.halfwayFired, itemsCommFired:S.itemsCommFired,
         log:S.log.slice(-30), px:S.px, py:S.py, pw:S.pw, ph_panel:S.ph_panel,
-        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale, inflightLogStart:S.inflightLogStart, diagnostics:S.diagnostics, airportClosed:S.airportClosed, inHospital:S.inHospital, inJail:S.inJail, terrorThreat:S.terrorThreat, stateOfEmergency:S.stateOfEmergency, flightHistory:S.flightHistory, factionName:S.factionName, commSchedule:S.commSchedule, commUsedIds:S.commUsedIds,
+        min:S.min, apiKey:S.apiKey, previewDst:S.previewDst, inflightSchedule:S.inflightSchedule, planeScale:S.planeScale, inflightLogStart:S.inflightLogStart, landedLogStart:S.landedLogStart, diagnostics:S.diagnostics, airportClosed:S.airportClosed, inHospital:S.inHospital, inJail:S.inJail, terrorThreat:S.terrorThreat, stateOfEmergency:S.stateOfEmergency, flightHistory:S.flightHistory, factionName:S.factionName, commSchedule:S.commSchedule, commUsedIds:S.commUsedIds, factionMethodCache:factionMethodCache, factionPlaneTypeCache:factionPlaneTypeCache,
       }));
     } catch(e) {}
   };
@@ -393,6 +432,23 @@
       if (S.itemsCommFired === undefined) S.itemsCommFired = false;
       if (!S.planeScale) S.planeScale = 100;
       if (S.inflightLogStart === undefined) S.inflightLogStart = null;
+      if (S.landedLogStart === undefined) S.landedLogStart = null;
+      // v81.1.0: rehydrate the faction method cache module variable from
+      // the persisted snapshot. Older installs won't have this field, so
+      // default to an empty object.
+      if (S.factionMethodCache && typeof S.factionMethodCache === 'object') {
+        factionMethodCache = S.factionMethodCache;
+      } else {
+        factionMethodCache = {};
+        S.factionMethodCache = factionMethodCache;
+      }
+      // v81.2.0: same for the plane-type cache.
+      if (S.factionPlaneTypeCache && typeof S.factionPlaneTypeCache === 'object') {
+        factionPlaneTypeCache = S.factionPlaneTypeCache;
+      } else {
+        factionPlaneTypeCache = {};
+        S.factionPlaneTypeCache = factionPlaneTypeCache;
+      }
       if (!S.flightHistory || !Array.isArray(S.flightHistory.samples)) S.flightHistory = { samples: [] };
       if (!Array.isArray(S.commSchedule)) S.commSchedule = [];
       if (!Array.isArray(S.commUsedIds)) S.commUsedIds = [];
@@ -834,8 +890,17 @@ ${dots}
 
   function renderLog() {
     if (!el.log) return;
-    const startIdx = (S.flying && S.inflightLogStart !== null) ? S.inflightLogStart : 0;
-    const lines = S.log.slice(startIdx).slice(-8);
+    // v81.3.0: CLEARING MESSAGES spec rule — "do not clear messages
+    // halfway through a flight". Previously we filtered the display
+    // start index based on phase (inflightLogStart hid takeoff
+    // messages once cruise began; landedLogStart hid the whole flight
+    // log once landed, leaving only the arrival sequence). Both
+    // counted as "clearing" from the user's perspective. Now we always
+    // render from S.log[0]; the last-8 display window still trims
+    // naturally as messages accumulate, but nothing is hidden by
+    // phase. S.log itself only gets cleared on the next takeoff
+    // transition (see tick() in the takeoff branch).
+    const lines = S.log.slice(-8);
     el.log.innerHTML = lines.map((t, i) => {
       const isHtml = t.startsWith('\x01');
       const content = isHtml ? t.slice(1) : t.replace(/&/g,'&amp;').replace(/</g,'&lt;');
@@ -939,6 +1004,8 @@ ${dots}
       if (!S.inHospital) {
         S.inHospital = true;
         clearClosedStateVisuals();
+        // v81.3.0: status ack for NO FLYING ALLOWED (hospital).
+        S.log.push(`>>> Status: ${PHASE_CFG.inaccessible.label} ack. OK.`);
         const hm = '\x01You are in <a href="https://www.torn.com/hospitalview.php" target="_blank" style="color:#ff9944;text-decoration:underline">hospital</a>, recuperating.';
         S.log.push(hm);
         recentMessages.push('in hospital');
@@ -954,6 +1021,8 @@ ${dots}
     }
     if (S.inHospital) {
       S.inHospital = false;
+      // v81.3.0: status ack for transition back to READY.
+      addLog(`>>> Status: ${PHASE_CFG.ready.label} ack. OK.`);
       addLog('You have been discharged from hospital.');
       saveS();
     }
@@ -967,6 +1036,8 @@ ${dots}
       if (!S.inJail) {
         S.inJail = true;
         clearClosedStateVisuals();
+        // v81.3.0: status ack for NO FLYING ALLOWED (jail).
+        addLog(`>>> Status: ${PHASE_CFG.inaccessible.label} ack. OK.`);
         addLog('You are in jail, no flying at the moment.');
         recentMessages.push('in jail');
         saveS();
@@ -983,6 +1054,8 @@ ${dots}
       // v70.47.0: per updated spec, emit a one-time release message when
       // the jail text disappears (mirrors the race-closure re-open
       // pattern). Hospital uses a similar "discharged" line above.
+      // v81.3.0: status ack for transition back to READY.
+      addLog(`>>> Status: ${PHASE_CFG.ready.label} ack. OK.`);
       addLog('You are out of jail. Airport accessible.');
       saveS();
     }
@@ -1002,6 +1075,8 @@ ${dots}
         clearClosedStateVisuals();
         commentaryQueue = [];
         draining = false;
+        // v81.3.0: status ack for AIRPORT CLOSED transition.
+        S.log.push(`>>> Status: ${PHASE_CFG.airport_closed.label} ack. OK.`);
         const am = '\x01Airport closed — you are in a <a href="https://www.torn.com/page.php?sid=racing" target="_blank" style="color:#ff6666;text-decoration:underline">race</a>.';
         S.log.push(am);
         recentMessages.push('airport closed');
@@ -1020,7 +1095,11 @@ ${dots}
       if (_noRaceCount >= 1) {
         S.airportClosed = false;
         _noRaceCount = 0;
-        if (!S.flying) addLog('Airport has re-opened.');
+        if (!S.flying) {
+          // v81.3.0: status ack for transition back to READY.
+          addLog(`>>> Status: ${PHASE_CFG.ready.label} ack. OK.`);
+          addLog('Airport has re-opened.');
+        }
         saveS();
       } else {
         if (el.status) {
@@ -1039,6 +1118,8 @@ ${dots}
       if (!S.stateOfEmergency) {
         S.stateOfEmergency = true;
         clearClosedStateVisuals();
+        // v81.3.0: status ack for STATE OF EMERGENCY.
+        addLog(`>>> Status: ${PHASE_CFG.state_of_emergency.label} ack. OK.`);
         addLog('Armed security turn you away.');
         setTimeout(() => {
           if (S.stateOfEmergency) addLog('Torn City is in lockdown. Airport closed until further notice.');
@@ -1065,6 +1146,8 @@ ${dots}
       if (!S.terrorThreat) {
         S.terrorThreat = true;
         clearClosedStateVisuals();
+        // v81.3.0: status ack for POTENTIAL TERROR THREAT.
+        addLog(`>>> Status: ${PHASE_CFG.terror_threat.label} ack. OK.`);
         addLog('Armed security point their weapons at you, denying entry.');
         setTimeout(() => {
           if (S.terrorThreat) addLog('Torn City is in lockdown. Airport closed until further notice.');
@@ -1118,6 +1201,16 @@ ${dots}
     };
     if (phase !== S.prevPhase) {
       S.prevPhase = phase;
+      // v81.3.0: CLEARING MESSAGES spec — "Between each status print
+      // '>>> Status: [status] ack. OK.'". Fires at every phase
+      // transition into a known flight phase. The ack lands in the
+      // log just before the phase's own commentary (takeoff sequence,
+      // inflight, descent, landing, arrival), giving a clear visual
+      // marker of the status change.
+      const phaseLabel = PHASE_CFG[phase] && PHASE_CFG[phase].label ? PHASE_CFG[phase].label : phase;
+      if (phase && phase !== 'ready') {
+        addLog(`>>> Status: ${phaseLabel} ack. OK.`);
+      }
       if (phase !== 'landing' && phase !== 'inflight' && phase !== 'arrived') triggerComm(phase, params);
       if (phase === 'inflight') {
         S.phasesTriggered.inflight = true;
@@ -1129,6 +1222,13 @@ ${dots}
       }
       if (phase === 'arrived') {
         S.phasesTriggered.arrived = true;
+        // v81.0.2: snapshot the log position at the start of the arrival
+        // sequence. renderLog uses this when !S.flying so the landed
+        // state shows only the arrival messages (Screech / Arrival
+        // confirmed / Welcome / Right back to business) rather than
+        // the whole flight starting with the takeoff line at the top.
+        S.landedLogStart = S.log.length;
+        saveS();
         const arrivedFns = COMMENTARY.arrived;
         const capturedParams = Object.assign({}, params);
         arrivedFns.forEach((fn, i) => {
@@ -1215,6 +1315,9 @@ ${dots}
     }
     if (timeLeft <= 60000 && S.flying && !S.phasesTriggered.landing_screech) {
       S.phasesTriggered.landing_screech = true;
+      // v81.3.0: status ack for the LANDING phase (which is triggered
+      // on timeLeft rather than the phase-transition block above).
+      addLog(`>>> Status: ${PHASE_CFG.landing.label} ack. OK.`);
       triggerComm('landing', params);
       saveS();
     }
@@ -1299,7 +1402,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 81.0.0</p>
+    <p class="ver-t">Version 81.3.0</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <p style="margin-top:14px"><a href="https://www.torn.com/forums.php#/p=threads&f=67&t=16558163&b=0&a=0" target="_blank" style="color:#88ddff;text-decoration:underline">Forum link: Bugs, feedback and LIKES welcome!</a></p>
@@ -2146,6 +2249,46 @@ ${dots}
   let factionDrawTimer = null;
   let factionData = {};
   let factionAbroad = {};
+  // v81.1.0: per-member ticket method cache. The v2 faction/members API
+  // does not expose travel method, so we deduce it at takeoff time by
+  // comparing the observed remaining flight duration against the
+  // expected duration for each ticket (BASE_DUR[route] / TICKETS[k].mult).
+  // Keyed by member id; the `until` field validates the cache against
+  // the current flight so a member starting a new flight invalidates
+  // the stale entry automatically. Persisted in S.factionMethodCache
+  // so page refreshes don't lose deductions.
+  let factionMethodCache = {};
+  // v81.2.0: per-member plane_image_type cache, sourced from the v2
+  // /user/<id>/basic?striptags=true endpoint which exposes
+  // status.plane_image_type directly. This is authoritative whereas
+  // the duration-based deduction above is approximate. Same key/value
+  // shape as factionMethodCache: { planeImageType, until }. Persisted
+  // in S.factionPlaneTypeCache.
+  let factionPlaneTypeCache = {};
+  // v81.2.0: throttled fetch queue for the per-member basic profile
+  // calls. Spreads load to stay under the 100/min API limit even when
+  // the faction has many flying members simultaneously.
+  const planeTypeFetchQueue = [];
+  const planeTypeFetchInFlight = new Set();
+  let planeTypeFetchBusy = false;
+
+  // v81.2.0: maps the API's status.plane_image_type string to a ticket
+  // key understood by TICKETS / matchFactionTicket. Confirmed value
+  // from the spec example: "light_aircraft" for an Airstrip flight.
+  // Other values are inferred from naming conventions; if Torn ships
+  // a value we don't recognise, returns null and the parser falls
+  // back to the v81.1.0 duration deduction.
+  function planeImageTypeToTicket(pit) {
+    if (!pit) return null;
+    const s = String(pit).toLowerCase();
+    if (s.includes('light')) return 'airstrip';
+    if (s.includes('prop')) return 'airstrip';
+    if (s.includes('private')) return 'private';
+    if (s.includes('business')) return 'business';
+    if (s.includes('jumbo')) return 'standard';
+    if (s.includes('commercial') || s.includes('airliner') || s.includes('standard')) return 'standard';
+    return null;
+  }
   let savedPlayerViewBox = '';
   // v70.14.0: track previously-known flying faction members so we can fire
   // a takeoff notification when a new entry appears between polls.
@@ -2441,10 +2584,22 @@ ${dots}
       const srcCity = DESTS[m.src]?.city || m.src || '?';
       const dstCity = DESTS[m.dst]?.city || m.dst || '?';
       const timeStr = hrs > 0 ? `${hrs}h ${mins}m` : (mins > 0 ? `${mins}m ${secs}s` : `${secs}s`);
-      const isSmall = (m.method && (m.method.toLowerCase().includes('airstrip') || m.method.toLowerCase().includes('private')));
-      const planeIcon = isSmall
-        ? '<svg width="14" height="14" viewBox="-6 -6 12 12"><ellipse cx="0" cy="0" rx="1" ry="3.5" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="-4,-0.3 -3.5,0.5 3.5,0.5 4,-0.3" fill="#aaa" stroke="#666" stroke-width="0.5"/><line x1="-1.2" y1="3.5" x2="1.2" y2="3.5" stroke="#aaa" stroke-width="0.9"/></svg>'
-        : '<svg width="14" height="14" viewBox="-7 -7 14 14"><ellipse cx="0" cy="0" rx="1.5" ry="4" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,-1.5 -6,1 -5.5,2 0,-0.2 5.5,2 6,1" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,2.5 -2,4 -1.5,4.5 0,3.5 1.5,4.5 2,4" fill="#aaa" stroke="#666" stroke-width="0.5"/></svg>';
+      // v81.1.0: roster plane icon now reflects the actual deduced
+      // ticket type rather than a binary small/large split, so the icon
+      // next to each name matches the sprite drawn on the map.
+      //   Standard, Business Class → jumbo silhouette
+      //   Private                  → small jet (no propeller, swept tail)
+      //   Airstrip                 → small prop with propeller line
+      const tk = matchFactionTicket(m.method);
+      const planeKey = TICKETS[tk] && TICKETS[tk].plane ? TICKETS[tk].plane : 'jumbo';
+      let planeIcon;
+      if (planeKey === 'private_plane') {
+        planeIcon = '<svg width="14" height="14" viewBox="-6 -6 12 12"><ellipse cx="0" cy="0" rx="1" ry="4" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,-1.5 -5,1.5 -4.5,2.5 0,0.5 4.5,2.5 5,1.5" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,2.5 -2,4 -1.5,4.5 0,3.25 1.5,4.5 2,4" fill="#aaa" stroke="#666" stroke-width="0.5"/></svg>';
+      } else if (planeKey === 'prop_plane') {
+        planeIcon = '<svg width="14" height="14" viewBox="-6 -6 12 12"><ellipse cx="0" cy="0.5" rx="1" ry="3.5" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="-4.5,-0.5 -4,0.5 4,0.5 4.5,-0.5" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,2.5 -1.5,4 -1,4.5 0,3.25 1,4.5 1.5,4" fill="#aaa" stroke="#666" stroke-width="0.5"/><line x1="-1.5" y1="-4" x2="1.5" y2="-4" stroke="#aaa" stroke-width="0.9" stroke-linecap="round"/></svg>';
+      } else {
+        planeIcon = '<svg width="14" height="14" viewBox="-7 -7 14 14"><ellipse cx="0" cy="0" rx="1.5" ry="4" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,-1.5 -6,1 -5.5,2 0,-0.2 5.5,2 6,1" fill="#aaa" stroke="#666" stroke-width="0.5"/><polygon points="0,2.5 -2,4 -1.5,4.5 0,3.5 1.5,4.5 2,4" fill="#aaa" stroke="#666" stroke-width="0.5"/></svg>';
+      }
       // v80.0.0: clickable row. data-fid lets the delegated click handler
       // resolve which member was clicked. Highlighted row gets a yellow
       // tint, bold text and a subtle background bar.
@@ -2467,6 +2622,72 @@ ${dots}
       el.log.innerHTML = html;
       el.log.scrollTop = scrollPos;
     }
+  }
+
+  // v81.2.0: queue a per-member basic-profile fetch to populate
+  // factionPlaneTypeCache. Skips queueing if a fresh cache entry
+  // already exists (matched by `until`) or if a fetch for this id is
+  // already in flight.
+  function queuePlaneTypeFetch(memberId, until) {
+    if (!memberId || !until) return;
+    if (planeTypeFetchInFlight.has(memberId)) return;
+    const cached = factionPlaneTypeCache[memberId];
+    if (cached && cached.until === until && cached.planeImageType) return;
+    // De-dupe queued entries — replace any stale queued request for the
+    // same id so we always fetch against the latest `until`.
+    for (let i = planeTypeFetchQueue.length - 1; i >= 0; i--) {
+      if (planeTypeFetchQueue[i].memberId === memberId) {
+        planeTypeFetchQueue.splice(i, 1);
+      }
+    }
+    planeTypeFetchQueue.push({ memberId, until });
+    processPlaneTypeFetchQueue();
+  }
+
+  function processPlaneTypeFetchQueue() {
+    if (planeTypeFetchBusy || !planeTypeFetchQueue.length) return;
+    if (!S.apiKey) { planeTypeFetchQueue.length = 0; return; }
+    planeTypeFetchBusy = true;
+    const { memberId, until } = planeTypeFetchQueue.shift();
+    planeTypeFetchInFlight.add(memberId);
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: `https://api.torn.com/v2/user/${memberId}/basic?striptags=true&key=${S.apiKey}`,
+      onload: r => {
+        try {
+          const data = JSON.parse(r.responseText);
+          // data.profile.status.plane_image_type — only present while
+          // the member is actively traveling. If they've landed since
+          // we queued the fetch, the field will be absent; skip the
+          // cache write in that case.
+          if (data && data.profile && data.profile.status && data.profile.status.plane_image_type) {
+            factionPlaneTypeCache[memberId] = {
+              planeImageType: data.profile.status.plane_image_type,
+              until: until,
+            };
+            S.factionPlaneTypeCache = factionPlaneTypeCache;
+            saveS();
+            // Trigger a redraw so the corrected sprite / icon appears
+            // immediately rather than waiting for the next 60s poll.
+            if (factionFlightsOn) {
+              try { drawFactionFlights(); } catch(e) {}
+              try { renderFactionRoster(); } catch(e) {}
+            }
+          }
+        } catch(e) {}
+        planeTypeFetchInFlight.delete(memberId);
+        planeTypeFetchBusy = false;
+        // ~3 fetches/sec — well under the 100/min API limit even when
+        // shared with the 60s faction poll and any other key usage.
+        setTimeout(processPlaneTypeFetchQueue, 350);
+      },
+      onerror: () => {
+        planeTypeFetchInFlight.delete(memberId);
+        planeTypeFetchBusy = false;
+        // Back off harder on transport errors.
+        setTimeout(processPlaneTypeFetchQueue, 2000);
+      },
+    });
   }
 
   function fetchFactionFlights() {
@@ -2520,8 +2741,35 @@ ${dots}
                 const estDur = BASE_DUR[routeK] || BASE_DUR['torn_' + dk3] || 18000000;
                 const stUntil = (st && st.until) ? st.until * 1000 : 0;
                 const arrTime3 = stUntil > Date.now() ? stUntil : (Date.now() + estDur / 2);
-                const depTime3 = arrTime3 - estDur;
-                factionData[memberId] = { name: membName, src: srcFinal, dst: dk3, depTime: depTime3, arrTime: arrTime3, method: 'Standard' };
+                // v81.2.0: prefer the authoritative plane_image_type
+                // from the per-member basic-profile API call when
+                // available. Falls back to the v81.1.0 duration-based
+                // deduction (factionMethodCache) when the fetch hasn't
+                // returned yet — that provides immediate visual feedback
+                // at takeoff while the API call is in flight. Both
+                // caches are keyed by member id and validated by `until`.
+                const ptCached = factionPlaneTypeCache[memberId];
+                const methCached = factionMethodCache[memberId];
+                let methodFinal = 'Standard';
+                let multFinal = 1.0;
+                if (ptCached && ptCached.until === arrTime3 && ptCached.planeImageType) {
+                  const tk = planeImageTypeToTicket(ptCached.planeImageType);
+                  if (tk && TICKETS[tk]) {
+                    methodFinal = TICKETS[tk].label || 'Standard';
+                    multFinal = TICKETS[tk].mult || 1.0;
+                  }
+                } else if (methCached && methCached.until === arrTime3 && methCached.method) {
+                  methodFinal = methCached.method;
+                  const tk = matchFactionTicket(methodFinal);
+                  multFinal = TICKETS[tk] && TICKETS[tk].mult ? TICKETS[tk].mult : 1.0;
+                }
+                const depTime3 = arrTime3 - (estDur / multFinal);
+                factionData[memberId] = { name: membName, src: srcFinal, dst: dk3, depTime: depTime3, arrTime: arrTime3, method: methodFinal };
+                // v81.2.0: queue a plane-type fetch if we don't have a
+                // fresh authoritative entry. queuePlaneTypeFetch
+                // self-skips on cache hit and on already-in-flight, so
+                // this is a cheap no-op when nothing's needed.
+                queuePlaneTypeFetch(memberId, arrTime3);
               }
               continue;
             }
@@ -2571,6 +2819,48 @@ ${dots}
               if (!prevFactionFlyingIds.has(id)) {
                 const m = factionData[id];
                 if (m && m.src && m.dst) {
+                  // v81.1.0: deduce the member's travel method from the
+                  // observed remaining duration. At takeoff the player
+                  // has only just departed, so (arrTime - now) ≈ the
+                  // ticket's full flight duration. We compare against
+                  // BASE_DUR[route] / mult for each ticket type and pick
+                  // the closest match. Polling cadence is 60s so the
+                  // observed dur could be off by up to that much; the
+                  // four ticket mults (1.00/1.15/1.60/1.80) are spaced
+                  // far enough apart that the closest-match remains
+                  // unambiguous even on shorter routes.
+                  if (m.arrTime) {
+                    const routeK2 = 'torn_' + (m.dst === 'torn' ? m.src : m.dst);
+                    const baseDur = BASE_DUR[routeK2];
+                    if (baseDur) {
+                      const observedDur = m.arrTime - Date.now();
+                      const candidates = [
+                        ['Standard', baseDur / TICKETS.standard.mult, TICKETS.standard.mult],
+                        ['Business Class', baseDur / TICKETS.business.mult, TICKETS.business.mult],
+                        ['Private', baseDur / TICKETS.private.mult, TICKETS.private.mult],
+                        ['Airstrip', baseDur / TICKETS.airstrip.mult, TICKETS.airstrip.mult],
+                      ];
+                      let bestMethod = 'Standard';
+                      let bestMult = 1.0;
+                      let bestDelta = Infinity;
+                      for (const [label, expDur, mult] of candidates) {
+                        const delta = Math.abs(observedDur - expDur);
+                        if (delta < bestDelta) {
+                          bestDelta = delta;
+                          bestMethod = label;
+                          bestMult = mult;
+                        }
+                      }
+                      // Cache by id, validated by `until` (= arrTime).
+                      factionMethodCache[id] = { method: bestMethod, until: m.arrTime };
+                      // Correct the in-flight entry in place: method
+                      // label and the depTime derived from the matched
+                      // mult. Without this the sprite would render at
+                      // the wrong position until the next poll runs.
+                      m.method = bestMethod;
+                      m.depTime = m.arrTime - (baseDur / bestMult);
+                    }
+                  }
                   const srcCity = DESTS[m.src]?.city || m.src;
                   const dstCity = DESTS[m.dst]?.city || m.dst;
                   notifyFactionTakeoff(m.name, srcCity, dstCity);
@@ -2582,6 +2872,18 @@ ${dots}
             // already discarded their flight entry.
             for (const id of prevFactionFlyingIds) {
               if (!currentFlyingIds.has(id)) {
+                // v81.1.0: clear the cached method on landing so the
+                // member's next flight gets fresh deduction. Without
+                // this, a member who took Private one day and Standard
+                // the next would render with the stale Private sprite
+                // until the cache invalidated on `until` mismatch — but
+                // that mismatch check only catches a different flight,
+                // not the same route twice.
+                delete factionMethodCache[id];
+                // v81.2.0: same logic for the plane-type cache. The
+                // basic-profile fetch will repopulate on the next
+                // takeoff for this member.
+                delete factionPlaneTypeCache[id];
                 const cached = prevFactionFlying[id];
                 if (cached && cached.dst) {
                   const dstCity = DESTS[cached.dst]?.city || cached.dst;
@@ -2589,6 +2891,7 @@ ${dots}
                 }
               }
             }
+            saveS();
           }
           prevFactionFlyingIds = currentFlyingIds;
           // Refresh the cache from the just-parsed factionData so the next
@@ -3224,6 +3527,14 @@ ${dots}
     S.halfwayFired = false;
     S.itemsCommFired = false;
     S.turbTriggered = false;
+    // v81.0.2: snap the landed marker to the current log length. Since
+    // forceLandedState bypasses the arrival sequence (the user already
+    // landed, we're just catching up), there's no fresh arrival
+    // commentary worth showing — and the prior flight's takeoff/inflight
+    // lines shouldn't linger in the landed-state view either. By
+    // setting the marker to S.log.length, renderLog displays nothing
+    // until the next flight starts.
+    S.landedLogStart = S.log.length;
     saveS();
     // Visual reset: clear flight path, draw the plane at the landed
     // city, highlight that city only, blank out instrument readings.
@@ -3390,25 +3701,23 @@ ${dots}
       dep = S.depTime;
       trustClickHandlerDep = true;
     } else {
-      // (2) factionData has the player's own entry with matching route
-      // and a depTime field. That dep comes directly from Torn's faction
-      // API parse of the member's flight description — no duration-table
-      // guesswork.
-      let fdDep = null;
-      if (S.player) {
-        for (const id of Object.keys(factionData)) {
-          if (id === 'self_player') continue;
-          const m = factionData[id];
-          if (!m || m.name !== S.player) continue;
-          if (m.src === src && m.dst === dst && m.depTime) {
-            fdDep = m.depTime;
-            break;
-          }
-        }
-      }
-      if (fdDep) {
-        dep = fdDep;
-      } else if (!S.flying || S.src !== src || S.dst !== dst ||
+      // v81.2.1: REMOVED Tier 2 (fdDep lookup from factionData).
+      // The factionData parser computes depTime from
+      // `arrTime3 - estDur/multFinal`, but multFinal defaults to 1.0
+      // (Standard) until the plane_image_type fetch returns (~350ms
+      // after takeoff). For every fresh return-flight detection where
+      // the click handler missed Travel home, fdDep was thus computed
+      // as `arr - StandardEstDur` — placing dep ~30-60% too early for
+      // Private/Airstrip/Business flights and putting the plane far
+      // along the path with phase=inflight, skipping the entire
+      // takeoff sequence (return_start "Refuel complete..." then fired
+      // late, appearing AFTER inflight messages). Removing fdDep means
+      // we fall through to:
+      //   (3) fresh-start (dep = now) — correct for just-clicked
+      //       Fly Now / Travel home that the click handler didn't see
+      //   (4) BASE_DUR fallback — correct only for re-detection of a
+      //       still-active flight after a page refresh
+      if (!S.flying || S.src !== src || S.dst !== dst ||
                  (S.arrTime && S.arrTime < Date.now() - 60000)) {
         // (3) v80.14.0 (broadened from v80.13.0): fresh-start fallback.
         // Fires when ANY of:
@@ -3429,8 +3738,8 @@ ${dots}
       } else {
         // (4) Fallback: derive dep from the (possibly stale) BASE_DUR
         // table. Only reached when S was already flying with the right
-        // route and a still-future arrTime, and factionData didn't have
-        // us — i.e. an active flight being re-detected.
+        // route and a still-future arrTime — i.e. an active flight
+        // being re-detected after a page refresh.
         dep = arr - dur;
       }
     }
@@ -3715,7 +4024,15 @@ ${dots}
     turbFired = false;
     S.inflightSchedule = null;
     S.inflightLogStart = null;
+    S.landedLogStart = null;
     S.diagnostics = null;
+    // v81.3.0: S.log cleared here at flight start. This is effectively
+    // "at takeoff start" per the CLEARING MESSAGES spec rule — the
+    // first takeoff tick fires microseconds after startFlightTimes
+    // returns. The real v81.3.0 change is removing the renderLog
+    // display-window filters (inflightLogStart / landedLogStart) so
+    // messages stay visible throughout the flight and through the
+    // landed state until the next takeoff.
     S.log = [];
     S.previewDst = null;
     // v70.16.0: reset RAG history and kick off the flight sampler so the
@@ -3750,7 +4067,18 @@ ${dots}
         isTornCity: dk === 'torn',
       };
       triggerComm('return_start', p);
-      S.phasesTriggered.takeoff = true;
+      // v81.0.1: REMOVED `S.phasesTriggered.takeoff = true;` here.
+      // That line had been silently suppressing the entire takeoff
+      // commentary sequence on every return flight since v70.34.0 — the
+      // triggerComm dedup guard at line 848 would see takeoff already
+      // marked and bail before firing any of the takeoff messages. The
+      // TRAVEL 2.0 takeoff line (spec: "On outbound and return to torn
+      // flight, during take off, always print...") never appeared on
+      // return flights either. With this line gone, return_start fires
+      // its single "Refuel complete..." beat immediately, then tick()
+      // detects the takeoff phase transition normally and the full
+      // plane-size-appropriate takeoff sequence plays out at the spec's
+      // 5-second cadence.
       saveS();
     }
     startLoop();
