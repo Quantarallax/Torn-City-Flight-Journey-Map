@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      81.4.0
+// @version      81.4.2
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -476,6 +476,61 @@
     const b = BASE_DUR[`${sk}_${dk}`] || BASE_DUR[`${dk}_${sk}`] || 7200000;
     return Math.round(b / (TICKETS[tk]?.mult || 1));
   };
+
+  // v81.4.2: scrape Torn's Travel 2.0 in-flight progress bar to derive
+  // accurate flight progress (and therefore an accurate dep time)
+  // without relying on the BASE_DUR table. The script's BASE_DUR
+  // values have been observed to be substantially off vs Torn's
+  // post-Travel-2.0 actual durations (e.g. Beijing Airstrip: script
+  // says ~248 min, Torn appears to use ~80-150 min), which caused
+  // both the plane-ahead-of-timeline visual bug and the late-fire
+  // commentary wraparound. The progress bar at the bottom of the
+  // travel page reflects Torn's authoritative time; parse it and use
+  // it as the top-priority source for dep computation.
+  //
+  // Tries three selector patterns in order:
+  //   1. ARIA progressbar with valuenow/valuemax (most semantic)
+  //   2. Child with `style="width: X%"` inside a parent whose class
+  //      hints at progress/journey/travel
+  //   3. The flight-time footer container with a child width fill
+  // Returns null if no recognisable progress element is found, in
+  // which case callers fall back to existing BASE_DUR-based dep logic.
+  function readPageProgress() {
+    // (1) ARIA semantics
+    const aria = document.querySelector('[role="progressbar"][aria-valuenow]');
+    if (aria) {
+      const val = parseFloat(aria.getAttribute('aria-valuenow'));
+      const max = parseFloat(aria.getAttribute('aria-valuemax')) || 100;
+      if (!isNaN(val) && !isNaN(max) && max > 0) {
+        const pct = (val / max) * 100;
+        if (pct >= 0 && pct <= 100) return pct;
+      }
+    }
+    // (2) class-hinted parent with inline-style width child
+    const hintSelectors = [
+      '[class*="progress" i]',
+      '[class*="journey" i]',
+      '[class*="travel" i]',
+    ];
+    for (const sel of hintSelectors) {
+      const parents = document.querySelectorAll(sel);
+      for (const parent of parents) {
+        const filled = parent.querySelector('[style*="width"]');
+        if (filled) {
+          const style = filled.getAttribute('style') || '';
+          const m = style.match(/width\s*:\s*(\d+(?:\.\d+)?)\s*%/i);
+          if (m) {
+            const pct = parseFloat(m[1]);
+            // Reject 0 and 100 — those typically indicate the bar is
+            // either empty (pre-flight) or saturated (landed); not
+            // useful for dep derivation.
+            if (pct > 0 && pct < 100) return pct;
+          }
+        }
+      }
+    }
+    return null;
+  }
 
   const buildBez = (sk, dk) => {
     const s = toXY(DESTS[sk].lon, DESTS[sk].lat);
@@ -1408,7 +1463,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 81.4.0</p>
+    <p class="ver-t">Version 81.4.2</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <p style="margin-top:14px"><a href="https://www.torn.com/forums.php#/p=threads&f=67&t=16558163&b=0&a=0" target="_blank" style="color:#88ddff;text-decoration:underline">Forum link: Bugs, feedback and LIKES welcome!</a></p>
@@ -3774,9 +3829,38 @@ ${dots}
         break;
       }
     }
-    // Build src/dst + dep/arr.
+    // v81.4.1: lock S.ticket when re-detecting an in-progress flight
+    // whose route matches the saved state. The body scan above runs
+    // against the entire page body, which on the Travel 2.0 in-flight
+    // page can contain a different ticket label inside tooltips,
+    // hidden elements, or descriptive UI text (e.g. "Private Plane"
+    // appearing in some product description while the player is
+    // actually flying Airstrip). Without this gate the body scan
+    // would flip S.ticket mid-flight on every page refresh / re-entry
+    // — the user's altitude/airspeed/fuel/sprite would all change to
+    // the wrong ticket's values.
+    //   Fresh detection (no saved flight OR different route) → trust
+    //     the body scan, since we have no canonical state to defend.
+    //   Re-detection (S.flying=true with matching src/dst) → trust
+    //     S.ticket, ignore the body scan match.
+    // This was the fourth ticket-write path v81.0.0 missed (the click
+    // handler, readSelectedTicket, and watchDOM were gated on
+    // !S.flying then; the pickUpFromPage body scan wasn't).
     const src = isReturn ? nonTornCity : 'torn';
     const dst = isReturn ? 'torn' : nonTornCity;
+    if (S.flying && S.ticket && S.src === src && S.dst === dst) {
+      if (pageMatchedTicket && tk !== S.ticket) {
+        try {
+          console.log(
+            `[TCFV ticket] body-scan would flip S.ticket from '${S.ticket}' to '${tk}' on re-detect — IGNORED ` +
+            `(flying ${src}→${dst}; trusting saved ticket)`
+          );
+        } catch(e) {}
+      }
+      tk = S.ticket;
+      pageMatchedTicket = false;
+    }
+    // Build src/dst + dep/arr.
     const dur = getDur(src, dst, tk);
     if (dur <= 0) return;
     // Sanity: 12-hour ceiling on any single flight (was previously gated
@@ -3816,7 +3900,34 @@ ${dots}
       //       Fly Now / Travel home that the click handler didn't see
       //   (4) BASE_DUR fallback — correct only for re-detection of a
       //       still-active flight after a page refresh
-      if (!S.flying || S.src !== src || S.dst !== dst ||
+      // v81.4.2: try Torn's progress bar FIRST, before the Tier 3/4
+      // logic. The progress bar reflects Torn's authoritative
+      // dep/arr/now relationship, so we can derive an accurate dep
+      // regardless of:
+      //   - BASE_DUR being stale (Travel 2.0 reduced durations beyond
+      //     the 5.26% we already applied)
+      //   - S.flying having been incorrectly cleared by a mistaken
+      //     landed-state detection
+      //   - The click handler having missed the Fly Now event
+      // If the bar isn't readable, fall through to the existing
+      // Tier 3 / Tier 4 logic below.
+      //   progress = (now - dep) / (arr - dep)
+      //   total = (arr - now) / (1 - progress)
+      //   dep = arr - total
+      const pageProgress = readPageProgress();
+      if (pageProgress !== null && pageProgress > 0.5 && pageProgress < 99.5) {
+        const remaining = arr - Date.now();
+        const total = remaining / (1 - pageProgress / 100);
+        dep = arr - total;
+        try {
+          console.log(
+            `[TCFV dep] page-progress=${pageProgress.toFixed(1)}% ` +
+            `remaining=${(remaining/60000).toFixed(1)}min ` +
+            `derived total=${(total/60000).toFixed(1)}min ` +
+            `dep set from page bar`
+          );
+        } catch(e) {}
+      } else if (!S.flying || S.src !== src || S.dst !== dst ||
                  (S.arrTime && S.arrTime < Date.now() - 60000)) {
         // (3) v80.14.0 (broadened from v80.13.0): fresh-start fallback.
         // Fires when ANY of:
@@ -3875,9 +3986,40 @@ ${dots}
       return;
     }
     startFlightTimes(src, dst, tk, dep, arr, isReturn);
-    // Halfway catch-up to suppress retroactive announcement.
+    // v81.4.2: fast-forward phase suppression. When pickUpFromPage
+    // re-detects a flight that's already past phase X (because the
+    // script just loaded mid-flight, or BASE_DUR was stale and we just
+    // corrected dep via the page progress bar), all phase commentary
+    // for X and earlier should be marked as already fired so it doesn't
+    // play back in fast-forward over the final minutes of the flight.
+    //
+    // This was bug 2 in the v81.4.2 report — "Commentary got to landed
+    // too soon, then wrapped around and sped through the sequence again
+    // in last few minutes". Cause: dep was set to Date.now() (Tier 3
+    // fresh-start) when reality had the flight nearly over, so the
+    // script's perceived 0-100% was compressed into the few real
+    // minutes remaining. Now that page-progress dep gives us an
+    // accurate progress estimate, we use it to mark phases triggered.
     const total = arr - dep;
-    if (total > 0 && (Date.now() - dep) / total >= 0.5) S.halfwayFired = true;
+    const progress = total > 0 ? (Date.now() - dep) / total : 0;
+    if (progress >= 0.05) {
+      // Past takeoff — suppress takeoff sequence (was firing climb +
+      // ATC clearance + "Climbing to 12,000 ft" with seconds remaining).
+      S.phasesTriggered = S.phasesTriggered || {};
+      S.phasesTriggered.takeoff = true;
+    }
+    if (progress >= 0.10 && S.itemsCommFired === false) {
+      // Past the 0-10% return-flight items window — suppress items
+      // commentary so it doesn't fire just before landing.
+      S.itemsCommFired = true;
+    }
+    if (progress >= 0.5) {
+      // Past the halfway mark — suppress the "Halfway there" pair.
+      S.halfwayFired = true;
+    }
+    if (progress >= 0.75) S.phasesTriggered.descent = true;
+    if (progress >= 0.90) S.phasesTriggered.landing = true;
+    if (progress >= 0.97) S.phasesTriggered.landing_screech = true;
     // Refresh Flight View immediately.
     if (S.flying && S.dst && el.svg) {
       const vb = getZoomedViewBox(S.src, S.dst);
@@ -3899,8 +4041,30 @@ ${dots}
     const dep = (travel.departed || 0) * 1000;
     const arr = (travel.timestamp || 0) * 1000;
     if (!dest || !dep || !arr) return;
-    const dk = matchDest(dest), tk = matchTicket(method);
+    const dk = matchDest(dest), tk0 = matchTicket(method);
     if (S.flying && Math.abs(S.arrTime - arr) < 10000) return;
+    // v81.4.2: extend the v81.4.1 ticket lock to handleNetResponse.
+    // The network response for an in-progress flight can include a
+    // method string that doesn't match what the user actually bought
+    // (observed cause: server caching or response from an earlier
+    // travel call mid-purchase). Trust the saved ticket when we're
+    // already flying the matched route, the same way pickUpFromPage
+    // body-scan does. Fresh detection (S.flying false, or different
+    // route) still uses the network method.
+    let tk = tk0;
+    const isReturn = (!dk || dk === 'torn');
+    const dstForLock = isReturn ? 'torn' : dk;
+    if (S.flying && S.ticket && S.dst === dstForLock && S.src && S.src !== '') {
+      if (tk0 && tk0 !== S.ticket) {
+        try {
+          console.log(
+            `[TCFV ticket] net-response would flip S.ticket from '${S.ticket}' to '${tk0}' ` +
+            `(method='${method}') — IGNORED (flying ${S.src}→${dstForLock}; trusting saved ticket)`
+          );
+        } catch(e) {}
+      }
+      tk = S.ticket;
+    }
     if (dk && dk !== 'torn') {
       startFlightTimes('torn', dk, tk, dep, arr, false);
     } else if (!dk || dk === 'torn') {
