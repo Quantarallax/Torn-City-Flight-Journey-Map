@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      81.4.5
+// @version      81.4.6
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -25,7 +25,7 @@
   // header above and this constant MUST be kept in sync; the credits page
   // (and any future in-script version display) reads from VERSION so the
   // displayed version can never drift from the header again.
-  const VERSION = '81.4.5';
+  const VERSION = '81.4.6';
 
   /* ─────────────────────────────────────────────────────────────
      DESTINATIONS
@@ -3791,6 +3791,21 @@ ${dotsInner}
     // strings rendered inside the panel and treat them as the
     // player's own travel state.
     const body = getPageTextOutsidePanel();
+    // v81.4.6: when !S.flying, the body-scan must ONLY proceed if the
+    // Torn page itself reports an in-progress flight. Without this
+    // guard, the Torn travel agency UI for a landed player at e.g.
+    // Johannesburg contains destination button text like "From South
+    // Africa to Torn City" plus a "5h 16m" travel-time label — the
+    // route regex below matches "X to Torn", and the remainingMs
+    // fallback regexes happily parse the destination's travel time as
+    // if it were a flight countdown. The result is a spurious
+    // startFlightTimes call on any DOM mutation, which is what makes
+    // tabbing out and back, or toggling Faction Flyer on and off,
+    // appear to "start" a take-off and race through every phase. With
+    // S.flying=true (genuine in-progress flight being re-detected on
+    // page refresh) we proceed normally — the downstream dedup and
+    // v81.4.4 continuation guard handle that case safely.
+    if (!S.flying && !hasTornFlightSignal(body)) return;
     // v70.44.0: Torn's page shows return flights as "[departure city] to
     // Torn" (e.g. "Mexico to Torn", "South Africa to Torn City") — not
     // "Returning to Torn" as the earlier regex assumed. Capture the
