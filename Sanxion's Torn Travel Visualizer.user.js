@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      81.4.4
+// @version      81.4.5
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -25,7 +25,7 @@
   // header above and this constant MUST be kept in sync; the credits page
   // (and any future in-script version display) reads from VERSION so the
   // displayed version can never drift from the header again.
-  const VERSION = '81.4.4';
+  const VERSION = '81.4.5';
 
   /* ─────────────────────────────────────────────────────────────
      DESTINATIONS
@@ -3388,6 +3388,53 @@ ${dotsInner}
 
   const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 
+  // v81.4.5: return document.body.textContent MINUS the script's own
+  // panel contents. The panel renders the faction roster, chat log,
+  // member notifications etc., all of which can contain phrases like
+  // "Torn → Mexico", "X has taken off from Torn City headed for Y",
+  // "South Africa to Torn", and so on. Earlier route-detection code
+  // read the raw document.body.textContent and mis-attributed those
+  // panel strings to the player's own travel state — specifically,
+  // the MutationObserver's "Torn to X" body-scan at the bottom of the
+  // observer callback would call startFlightTimes when the user
+  // navigated from LANDED → Faction Flyer → Flight View, because the
+  // roster strings injected into the panel matched its regex (Bug:
+  // "going from LANDED flight visualiser to faction flyer and back
+  // again should not trigger take off"). pickUpFromPage also reads
+  // the body text and uses the panel-excluded version to belt-and-
+  // braces the same class of false positive.
+  function getPageTextOutsidePanel() {
+    if (!document.body) return '';
+    const full = document.body.textContent || '';
+    const panel = document.getElementById('tcfv');
+    if (!panel) return full;
+    const panelText = panel.textContent || '';
+    if (!panelText) return full;
+    // textContent serialises in document order so panelText is a
+    // contiguous substring of full — split-join removes every
+    // occurrence (defensive in case the panel re-renders mid-read).
+    return full.split(panelText).join('');
+  }
+
+  // v81.4.5: did the Torn page itself report an in-progress flight?
+  // The countdown text "Remaining Flight Time" only appears during a
+  // real airborne state, and the React data-model attribute on
+  // #travel-root carries travelStatus="airborne". Either signal is
+  // a strong indication the player is actually flying — required as
+  // a prereq for the observer's body-scan fallback so the regex can't
+  // promote stale or panel-injected text to a fresh take-off.
+  function hasTornFlightSignal(pageText) {
+    if (pageText && /Remaining\s+Flight\s+Time/i.test(pageText)) return true;
+    const tr = document.querySelector('#travel-root[data-model]');
+    if (tr) {
+      try {
+        const m = JSON.parse(tr.getAttribute('data-model') || '{}');
+        if (m && m.travelStatus === 'airborne') return true;
+      } catch(e) {}
+    }
+    return false;
+  }
+
   function matchDest(text) {
     if (!text) return null;
     const t = norm(text);
@@ -3738,7 +3785,12 @@ ${dotsInner}
     // FLIGHT with phantom altitude/airspeed/ETA values on the landed
     // page.
     if (checkLandedState()) return;
-    const body = document.body.textContent || '';
+    // v81.4.5: read body text from OUTSIDE the script's own panel —
+    // see getPageTextOutsidePanel for rationale. The route-direction
+    // regexes below would otherwise match faction roster / chat log
+    // strings rendered inside the panel and treat them as the
+    // player's own travel state.
+    const body = getPageTextOutsidePanel();
     // v70.44.0: Torn's page shows return flights as "[departure city] to
     // Torn" (e.g. "Mexico to Torn", "South Africa to Torn City") — not
     // "Returning to Torn" as the earlier regex assumed. Capture the
@@ -4146,18 +4198,33 @@ ${dotsInner}
           }
         }
         if (!S.flying) {
-          const body = document.body.textContent;
-          // v80.2.0: new Torn page wording "Torn to [city]" tried first;
-          // legacy "travelling to" wording kept as fallback.
-          let m = body.match(/\btorn(?:\s+city)?\s+to\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)\b/i);
-          if (!m) {
-            m = body.match(/(?:travelling|traveling|flying)\s+to\s+([A-Za-z\s]{3,30})(?:[.,\n]|$)/i);
-          }
-          if (m) {
-            const dk = matchDest(m[1]);
-            if (dk && dk !== S.dst && dk !== 'torn') {
-              const dur = getDur(S.src, dk, S.ticket);
-              startFlightTimes(S.src, dk, S.ticket, Date.now(), Date.now() + dur, S.src !== 'torn');
+          // v81.4.5: two changes that together fix "going from LANDED
+          // flight visualiser to faction flyer and back again should
+          // not trigger take off". (1) Read text from OUTSIDE the
+          // script's own panel — the faction roster and chat log can
+          // contain strings like "Torn → X" / "X to Torn" / "Y headed
+          // for Torn", and on every panel mutation this regex was
+          // matching them as if the player had just clicked Fly Now.
+          // (2) Require an actual Torn-side flight indicator
+          // ("Remaining Flight Time" countdown or #travel-root
+          // travelStatus=airborne) before promoting any text match to
+          // startFlightTimes. The body-scan is a fallback for cases
+          // the click handler missed; without a real Torn signal,
+          // there is by definition no in-progress flight to pick up.
+          const pageText = getPageTextOutsidePanel();
+          if (hasTornFlightSignal(pageText)) {
+            // v80.2.0: new Torn page wording "Torn to [city]" tried first;
+            // legacy "travelling to" wording kept as fallback.
+            let m = pageText.match(/\btorn(?:\s+city)?\s+to\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)\b/i);
+            if (!m) {
+              m = pageText.match(/(?:travelling|traveling|flying)\s+to\s+([A-Za-z\s]{3,30})(?:[.,\n]|$)/i);
+            }
+            if (m) {
+              const dk = matchDest(m[1]);
+              if (dk && dk !== S.dst && dk !== 'torn') {
+                const dur = getDur(S.src, dk, S.ticket);
+                startFlightTimes(S.src, dk, S.ticket, Date.now(), Date.now() + dur, S.src !== 'torn');
+              }
             }
           }
         }
