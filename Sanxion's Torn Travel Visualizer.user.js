@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      81.4.3
+// @version      81.4.4
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -20,6 +20,12 @@
 
 (function () {
   'use strict';
+
+  // v81.4.4: single source of truth for the version string. The @version
+  // header above and this constant MUST be kept in sync; the credits page
+  // (and any future in-script version display) reads from VERSION so the
+  // displayed version can never drift from the header again.
+  const VERSION = '81.4.4';
 
   /* ─────────────────────────────────────────────────────────────
      DESTINATIONS
@@ -597,12 +603,15 @@
     const routeSpan = Math.sqrt(routeW * routeW + routeH * routeH);
     // v81.4.0: tight mode for highlighted faction flights — spec
     // requires the route to fill as much of the window as possible.
-    // Drops padding from 35% to 12% of the route span and tightens
-    // the absolute minimum padding floor from 40 to 15.
-    const minSpan = tight ? 100 : 120;
+    // v81.4.4: but not at the cost of cutting off the city names and
+    // highlighted player name (font-sizes 9 and 11 — at 8× zoom those
+    // render as 72/88 px and overflow the window). New padding loosens
+    // tight mode just enough to keep labels on-screen while still
+    // filling most of the window for medium and long routes.
+    const minSpan = tight ? 180 : 120;
     const effectiveSpan = Math.max(routeSpan, minSpan);
-    const padPct = tight ? 0.12 : 0.35;
-    const padFloor = tight ? 15 : 40;
+    const padPct = tight ? 0.20 : 0.35;
+    const padFloor = tight ? 30 : 40;
     const pad = Math.max(padFloor, effectiveSpan * padPct);
     let minX = Math.min(s.x, d.x) - pad;
     let maxX = Math.max(s.x, d.x) + pad;
@@ -612,7 +621,7 @@
     minY = Math.max(0, minY);
     maxX = Math.min(MAP_W, maxX);
     maxY = Math.min(MAP_H, maxY);
-    const MIN_VW = tight ? 120 : 160;
+    const MIN_VW = tight ? 280 : 160;
     if (maxX - minX < MIN_VW) {
       const cx = (minX + maxX) / 2;
       minX = Math.max(0, cx - MIN_VW / 2);
@@ -632,14 +641,25 @@
   ───────────────────────────────────────────────────────────── */
 
   function buildMapSVG() {
-    let dots = '';
+    // v81.4.4: dest-dots now split into outer (glow + ring + core) and
+    // inner (white pip + label) layers. The two layers sandwich the
+    // flight paths so dotted lines appear OVER the coloured rings but
+    // UNDER the white central pip and the city label — per the BUGS
+    // spec ("Make dotted flight path line appear over the place name
+    // circles until the white central circle where they are
+    // underneath"). Applies to both player and faction views since
+    // both share the same SVG.
+    let dotsOuter = '';
+    let dotsInner = '';
     for (const [key, d] of Object.entries(DESTS)) {
       const { x, y } = toXY(d.lon, d.lat);
       const right = x < MAP_W * 0.55, lx = right ? 12 : -12, anc = right ? 'start' : 'end';
-      dots += `<g id="tcfv-dot-${key}" class="dest-dot" transform="translate(${x.toFixed(1)},${y.toFixed(1)})">
+      dotsOuter += `<g id="tcfv-dot-${key}" class="dest-dot" transform="translate(${x.toFixed(1)},${y.toFixed(1)})">
   <circle class="dot-glow" r="10" fill="${d.col}" opacity="0.08"/>
   <circle class="dot-ring" r="5.5" fill="none" stroke="${d.col}" stroke-width="0.8" opacity="0.4"/>
   <circle class="dot-core" r="3.5" fill="${d.col}" opacity="0.85"/>
+</g>`;
+      dotsInner += `<g class="dest-dot-inner" transform="translate(${x.toFixed(1)},${y.toFixed(1)})">
   <circle r="1.4" fill="#fff"/>
   <text class="dot-lbl" x="${lx}" y="4" font-size="9" fill="${d.col}" text-anchor="${anc}" font-family="Courier New,monospace" opacity="0.7" style="pointer-events:none">${d.city}</text>
 </g>`;
@@ -707,9 +727,10 @@
 <polygon points="934,338 952,328 958,352 945,362 930,353" fill="#1a4418" stroke="#2a6030" stroke-width="0.5"/>
 <polygon points="940,364 955,357 962,378 950,388 936,377" fill="#1a4418" stroke="#2a6030" stroke-width="0.4"/>
 <rect x="0" y="${MAP_H - 24}" width="${MAP_W}" height="24" fill="#1a3a26" opacity="0.7"/>
+${dotsOuter}
 <g id="tcfv-factiong"></g>
 <g id="tcfv-pathg"></g>
-${dots}
+${dotsInner}
 <g id="tcfv-planeg"></g>`;
   }
 
@@ -1463,7 +1484,7 @@ ${dots}
   <div id="tcfv-cred" class="tcfv-pg" style="display:none">
     <h3>&#9733; Credits</h3>
     <p class="big-t">TORN CITY<br>Flight Visualiser</p>
-    <p class="ver-t">Version 81.4.2</p>
+    <p class="ver-t">Version ${VERSION}</p>
     <p>Designed &amp; developed by</p>
     <a href="https://www.torn.com/profiles.php?XID=2987640" target="_blank" id="tcfv-author">&#9992; Sanxion [2987640]</a>
     <p style="margin-top:14px"><a href="https://www.torn.com/forums.php#/p=threads&f=67&t=16558163&b=0&a=0" target="_blank" style="color:#88ddff;text-decoration:underline">Forum link: Bugs, feedback and LIKES welcome!</a></p>
@@ -1612,8 +1633,14 @@ ${dots}
     // v70.15.0: regenerate diagnostics on each visit so every system rolls
     // fresh status/detail; then start the periodic randomiser so indicators
     // continue to change while the page is open.
+    // v81.4.4: ONLY generate when missing — every visit re-roll meant the
+    // graph the user came to look at was implicitly tied to the moment
+    // they opened the page, and feeding back into the running flight-
+    // sampler's perception of RAG counts. Diagnostics now persist for
+    // the whole flight; startFlightTimes is responsible for the per-
+    // flight re-roll.
     if (pg === 'diag') {
-      S.diagnostics = generateDiagnostics();
+      if (!S.diagnostics) S.diagnostics = generateDiagnostics();
       renderDiagPage();
       startDiagRandomiser();
     } else {
@@ -4279,33 +4306,62 @@ ${dots}
   }
 
   function startFlightTimes(sk, dk, tk, dep, arr, isReturn) {
+    // v81.4.4: detect whether this call is a genuinely fresh take-off
+    // or a re-detection of an in-progress flight (page refresh / DOM
+    // mutation observer firing). For re-detections we must preserve
+    // the things that belong to the WHOLE flight, not the moment of
+    // takeoff:
+    //   - flightHistory.samples: the RAG/altitude graph data the user
+    //     opens diagnostics to see. Wiping this on every page refresh
+    //     was Bug 4 ("Plane diagnostics screen needs to be persistent.
+    //     I went into it during a flight and it was only half
+    //     populated") — the graph filled only from the moment of the
+    //     re-detection onward, not from actual takeoff.
+    //   - return_start commentary ("Refuel complete. Taxiing to runway.
+    //     Have a nice flight."). Re-firing this from a refresh during
+    //     IN FLIGHT / DESCENT was Bug 5.
+    //   - S.log: chat history during the flight.
+    //   - commSchedule / commUsedIds: the per-flight player↔faction
+    //     message schedule.
+    const isContinuation = S.flying && S.src === sk && S.dst === dk &&
+                           S.flightHistory && S.flightHistory.samples &&
+                           S.flightHistory.samples.length > 0;
     S.src = sk; S.dst = dk; S.ticket = tk;
     S.depTime = dep; S.arrTime = arr;
     S.flying = true; S.isReturn = isReturn;
-    S.prevPhase = ''; S.phasesTriggered = {}; S.turbTriggered = false; S.halfwayFired = false; S.itemsCommFired = false;
+    S.prevPhase = ''; S.phasesTriggered = {}; S.turbTriggered = false;
     turbFired = false;
     S.inflightSchedule = null;
     S.inflightLogStart = null;
     S.landedLogStart = null;
-    S.diagnostics = null;
-    // v81.3.0: S.log cleared here at flight start. This is effectively
-    // "at takeoff start" per the CLEARING MESSAGES spec rule — the
-    // first takeoff tick fires microseconds after startFlightTimes
-    // returns. The real v81.3.0 change is removing the renderLog
-    // display-window filters (inflightLogStart / landedLogStart) so
-    // messages stay visible throughout the flight and through the
-    // landed state until the next takeoff.
-    S.log = [];
     S.previewDst = null;
-    // v70.16.0: reset RAG history and kick off the flight sampler so the
-    // diagnostics chart fills from left to right across this flight.
-    S.flightHistory = { samples: [] };
-    // v70.27.0: generate the comm-message schedule for this flight (1 or 2
-    // messages spread across the in-flight phase) and reset the
-    // already-referenced members list so the new flight starts fresh.
-    S.commSchedule = generateCommSchedule(dep, arr);
-    S.commUsedIds = [];
-    S.diagnostics = generateDiagnostics();
+    if (!isContinuation) {
+      S.halfwayFired = false;
+      S.itemsCommFired = false;
+      // v81.3.0: S.log cleared here at flight start. This is effectively
+      // "at takeoff start" per the CLEARING MESSAGES spec rule — the
+      // first takeoff tick fires microseconds after startFlightTimes
+      // returns. The real v81.3.0 change is removing the renderLog
+      // display-window filters (inflightLogStart / landedLogStart) so
+      // messages stay visible throughout the flight and through the
+      // landed state until the next takeoff.
+      S.log = [];
+      // v70.16.0: reset RAG history and kick off the flight sampler so
+      // the diagnostics chart fills from left to right across this
+      // flight.
+      S.flightHistory = { samples: [] };
+      // v70.27.0: generate the comm-message schedule for this flight (1
+      // or 2 messages spread across the in-flight phase) and reset the
+      // already-referenced members list so the new flight starts fresh.
+      S.commSchedule = generateCommSchedule(dep, arr);
+      S.commUsedIds = [];
+      S.diagnostics = generateDiagnostics();
+    } else if (!S.diagnostics) {
+      // Continuation but diagnostics were never generated (shouldn't
+      // happen but covered defensively) — regenerate without touching
+      // flightHistory.
+      S.diagnostics = generateDiagnostics();
+    }
     recordFlightSample();
     startFlightSampling();
     saveS();
@@ -4317,7 +4373,14 @@ ${dots}
     }
     drawPath(sk, dk);
     highlightDots(sk, dk);
-    if (isReturn) {
+    // v81.4.4 Bug 5: only fire return_start when this is a genuinely
+    // fresh take-off. Without this guard, "Refuel complete. Taxiing to
+    // runway. Have a nice flight." re-fires on every mid-flight page
+    // refresh and appears during IN FLIGHT / DESCENT (see Image 1 in
+    // the bug report).
+    const startTotal = arr - dep;
+    const startProgress = startTotal > 0 ? (Date.now() - dep) / startTotal : 0;
+    if (isReturn && !isContinuation && startProgress < 0.05) {
       const p = {
         name: S.player,
         src: DESTS[sk]?.city || '',
