@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      81.4.2
+// @version      81.4.3
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -3900,57 +3900,56 @@ ${dots}
       //       Fly Now / Travel home that the click handler didn't see
       //   (4) BASE_DUR fallback — correct only for re-detection of a
       //       still-active flight after a page refresh
-      // v81.4.2: try Torn's progress bar FIRST, before the Tier 3/4
-      // logic. The progress bar reflects Torn's authoritative
-      // dep/arr/now relationship, so we can derive an accurate dep
-      // regardless of:
-      //   - BASE_DUR being stale (Travel 2.0 reduced durations beyond
-      //     the 5.26% we already applied)
-      //   - S.flying having been incorrectly cleared by a mistaken
-      //     landed-state detection
-      //   - The click handler having missed the Fly Now event
-      // If the bar isn't readable, fall through to the existing
-      // Tier 3 / Tier 4 logic below.
-      //   progress = (now - dep) / (arr - dep)
-      //   total = (arr - now) / (1 - progress)
-      //   dep = arr - total
-      const pageProgress = readPageProgress();
-      if (pageProgress !== null && pageProgress > 0.5 && pageProgress < 99.5) {
-        const remaining = arr - Date.now();
-        const total = remaining / (1 - pageProgress / 100);
-        dep = arr - total;
-        try {
-          console.log(
-            `[TCFV dep] page-progress=${pageProgress.toFixed(1)}% ` +
-            `remaining=${(remaining/60000).toFixed(1)}min ` +
-            `derived total=${(total/60000).toFixed(1)}min ` +
-            `dep set from page bar`
-          );
-        } catch(e) {}
-      } else if (!S.flying || S.src !== src || S.dst !== dst ||
-                 (S.arrTime && S.arrTime < Date.now() - 60000)) {
-        // (3) v80.14.0 (broadened from v80.13.0): fresh-start fallback.
-        // Fires when ANY of:
+      // v81.4.3: REORDERED. The previous v81.4.2 order tried
+      // page-progress FIRST, which broke fresh return-flight take-offs
+      // from abroad: the just-loaded page can hold a bar value (either
+      // residual from the prior outbound flight, or an unrelated UI
+      // progress element matching our class hints) which produced a
+      // bogus dep far in the past, then the fast-forward suppression
+      // below marked takeoff (and sometimes inflight) as already
+      // triggered — so the user saw zero distance, wrong altimeter/
+      // airspeed/fuel, and jumped straight to IN FLIGHT.
+      //
+      // Correct order: page-progress is ONLY trustworthy when we're
+      // re-detecting an already-known flight (S.flying with matching
+      // route and a still-future arrTime). A genuinely fresh start
+      // must always use dep = Date.now() regardless of what any bar
+      // on the page reports.
+      const isReDetect = S.flying && S.src === src && S.dst === dst &&
+                         S.arrTime && S.arrTime > Date.now() - 60000;
+      if (!isReDetect) {
+        // (3) Fresh-start fallback. Fires when:
         //  - S was not previously flying (click handler missed the
         //    Fly Now event due to Travel 2.0 DOM changes), OR
-        //  - S was flying but the route doesn't match what the page
-        //    now says (different flight — previous flight ended
-        //    without proper state cleanup), OR
-        //  - S was flying but the previous arrTime is more than 60s
-        //    in the past (stale state that should have transitioned
-        //    to landed long ago).
-        // In all of these, treat as a fresh start: dep = now. The plane
-        // will be drawn at 0% along the path, which is correct for a
-        // just-clicked flight and is the safest answer for the stale
-        // cases (better than placing it at a random position computed
-        // from a wrong BASE_DUR value).
+        //  - S was flying but the route doesn't match the page (the
+        //    previous flight ended without proper state cleanup), OR
+        //  - S was flying but arrTime is >60s in the past (stale).
+        // dep = now puts the plane at 0% along the path — correct
+        // for a just-clicked flight and the safest answer for stale
+        // cases (better than computing from a wrong BASE_DUR).
         dep = Date.now();
       } else {
-        // (4) Fallback: derive dep from the (possibly stale) BASE_DUR
-        // table. Only reached when S was already flying with the right
-        // route and a still-future arrTime — i.e. an active flight
-        // being re-detected after a page refresh.
-        dep = arr - dur;
+        // Re-detection of an active flight: try page-progress first.
+        //   progress = (now - dep) / (arr - dep)
+        //   total = (arr - now) / (1 - progress)
+        //   dep = arr - total
+        const pageProgress = readPageProgress();
+        if (pageProgress !== null && pageProgress > 0.5 && pageProgress < 99.5) {
+          const remaining = arr - Date.now();
+          const total = remaining / (1 - pageProgress / 100);
+          dep = arr - total;
+          try {
+            console.log(
+              `[TCFV dep] page-progress=${pageProgress.toFixed(1)}% ` +
+              `remaining=${(remaining/60000).toFixed(1)}min ` +
+              `derived total=${(total/60000).toFixed(1)}min ` +
+              `dep set from page bar`
+            );
+          } catch(e) {}
+        } else {
+          // (4) BASE_DUR fallback for re-detection without a usable bar.
+          dep = arr - dur;
+        }
       }
     }
     // Dedup against current S.
