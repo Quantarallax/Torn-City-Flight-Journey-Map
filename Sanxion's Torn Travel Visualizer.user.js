@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      81.4.6
+// @version      81.4.7
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -25,7 +25,7 @@
   // header above and this constant MUST be kept in sync; the credits page
   // (and any future in-script version display) reads from VERSION so the
   // displayed version can never drift from the header again.
-  const VERSION = '81.4.6';
+  const VERSION = '81.4.7';
 
   /* ─────────────────────────────────────────────────────────────
      DESTINATIONS
@@ -560,13 +560,22 @@
      FLIGHT CALCULATORS
   ───────────────────────────────────────────────────────────── */
 
-  const getPhase = p => {
+  // v81.4.7: getPhase now takes timeLeft so 'arrived' can trigger by
+  // time-to-expiry rather than fixed percentage. The arrived sequence
+  // is 4 messages × 3800ms ≈ 15s; triggering at timeLeft<=25s ends it
+  // ~10s before Torn's timer expires, matching Torn's flight time
+  // remaining when LANDED happens (per spec BUGS request "extend the
+  // landing phase closer to when the timer has ran out"). Landing
+  // phase consequently extends to cover descent→arrived bridge —
+  // landing commentary still fires on the existing timeLeft<=60s
+  // gate, so its timing is unchanged.
+  const getPhase = (p, timeLeft) => {
     if (!S.flying) return 'ready';
     if (p < 0.05) return 'takeoff';
     if (p < 0.75) return 'inflight';
     if (p < 0.90) return 'descent';
-    if (p < 0.98) return 'landing';
-    return 'arrived';
+    if (timeLeft !== undefined && timeLeft <= 25000) return 'arrived';
+    return 'landing';
   };
 
   const getAlt = (p, timeLeftMs) => {
@@ -923,7 +932,7 @@ ${dotsInner}
 
   function updateStats(progress, timeLeftMs) {
     if (!el.status) return;
-    const phase = getPhase(progress);
+    const phase = getPhase(progress, timeLeftMs);
     const src = DESTS[S.src], dst = S.dst ? DESTS[S.dst] : (S.previewDst ? DESTS[S.previewDst] : null);
     const tkt = TICKETS[S.ticket] || TICKETS.standard;
     const totalDist = src && dst ? haversine(src, dst) : 0;
@@ -1258,7 +1267,7 @@ ${dotsInner}
     const elapsed = now - S.depTime;
     const progress = Math.min(1, Math.max(0, elapsed / total));
     const timeLeft = Math.max(0, S.arrTime - now);
-    const phase = getPhase(progress);
+    const phase = getPhase(progress, timeLeft);
     // v70.27.0: fire any comm messages whose scheduled time has come. The
     // helper is a no-op when the schedule is empty.
     processCommSchedule();
@@ -3901,6 +3910,18 @@ ${dotsInner}
       }
     }
     if (remainingMs <= 0) return;
+    // v81.4.7 defence-in-depth: when not actively flying, ignore any
+    // remainingMs below 5 minutes. The shortest possible Torn flight
+    // is ~24 minutes (Canada at Airstrip), so a small remaining time
+    // detected while S.flying is false is stale countdown data from
+    // a flight that just finished, not a new flight. Catches the
+    // residual window between the script's arrived sequence ending
+    // (~10s before Torn's timer) and Torn's UI fully transitioning
+    // away from 'Remaining Flight Time' — bringing tab focus during
+    // that window would otherwise have pickUpFromPage start a fresh
+    // 'flight' with the tiny remaining as its full duration, which
+    // then raced through every phase.
+    if (!S.flying && remainingMs < 5 * 60 * 1000) return;
     // v80.11.0: ticket detection from page.
     // Previously iterated in object-key order (standard → business →
     // private → airstrip) and stopped at the first \bLabel\b match. That
