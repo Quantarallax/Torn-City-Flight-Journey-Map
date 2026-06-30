@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TORN CITY Flight Visualiser
 // @namespace    sanxion.tc.flightvisualiser
-// @version      81.4.7
+// @version      81.4.8
 // @license      MIT
 // @description  Real-time animated flight visualiser for Torn City. SVG world map, curved animated flight path, plane animation, ATC commentary and live flight stats.
 // @author       Sanxion [2987640]
@@ -25,7 +25,7 @@
   // header above and this constant MUST be kept in sync; the credits page
   // (and any future in-script version display) reads from VERSION so the
   // displayed version can never drift from the header again.
-  const VERSION = '81.4.7';
+  const VERSION = '81.4.8';
 
   /* ─────────────────────────────────────────────────────────────
      DESTINATIONS
@@ -4409,36 +4409,44 @@ ${dotsInner}
   }
 
   function startFlightTimes(sk, dk, tk, dep, arr, isReturn) {
-    // v81.4.4: detect whether this call is a genuinely fresh take-off
+    // v81.4.4 / v81.4.8: detect whether this call is a fresh take-off
     // or a re-detection of an in-progress flight (page refresh / DOM
-    // mutation observer firing). For re-detections we must preserve
-    // the things that belong to the WHOLE flight, not the moment of
-    // takeoff:
-    //   - flightHistory.samples: the RAG/altitude graph data the user
-    //     opens diagnostics to see. Wiping this on every page refresh
-    //     was Bug 4 ("Plane diagnostics screen needs to be persistent.
-    //     I went into it during a flight and it was only half
-    //     populated") — the graph filled only from the moment of the
-    //     re-detection onward, not from actual takeoff.
-    //   - return_start commentary ("Refuel complete. Taxiing to runway.
-    //     Have a nice flight."). Re-firing this from a refresh during
-    //     IN FLIGHT / DESCENT was Bug 5.
-    //   - S.log: chat history during the flight.
-    //   - commSchedule / commUsedIds: the per-flight player↔faction
-    //     message schedule.
+    // mutation observer / faction-poll-driven pickUpFromPage / Travel
+    // 2.0 XHRs hitting handleNetResponse). On continuation, the per-
+    // flight state must be preserved or the next tick will treat the
+    // current phase as a new transition and re-fire its >>> Status:
+    // ack message and any phase-entry commentary (per BUGS spec
+    // 'should only enter any status once during a single flight').
+    //
+    // v81.4.4 already preserved flightHistory.samples, S.log,
+    // commSchedule, commUsedIds, diagnostics, halfwayFired,
+    // itemsCommFired.
+    //
+    // v81.4.8 extends the preserve list with: prevPhase,
+    // phasesTriggered, inflightSchedule, inflightLogStart,
+    // landedLogStart, turbTriggered (and the turbFired module var) —
+    // without which an inflight re-detect would clear prevPhase back
+    // to '' and the inflight schedule back to null, causing the next
+    // tick to re-fire 'IN FLIGHT ack. OK.' and the schedule's first
+    // message 'Levelling off at 12,000 feet...' every time the
+    // script re-detected the still-active flight (see bug screenshot
+    // — three re-detects, three repeats).
     const isContinuation = S.flying && S.src === sk && S.dst === dk &&
                            S.flightHistory && S.flightHistory.samples &&
                            S.flightHistory.samples.length > 0;
     S.src = sk; S.dst = dk; S.ticket = tk;
     S.depTime = dep; S.arrTime = arr;
     S.flying = true; S.isReturn = isReturn;
-    S.prevPhase = ''; S.phasesTriggered = {}; S.turbTriggered = false;
-    turbFired = false;
-    S.inflightSchedule = null;
-    S.inflightLogStart = null;
-    S.landedLogStart = null;
     S.previewDst = null;
     if (!isContinuation) {
+      // Fresh take-off — reset ALL per-flight state.
+      S.prevPhase = '';
+      S.phasesTriggered = {};
+      S.turbTriggered = false;
+      turbFired = false;
+      S.inflightSchedule = null;
+      S.inflightLogStart = null;
+      S.landedLogStart = null;
       S.halfwayFired = false;
       S.itemsCommFired = false;
       // v81.3.0: S.log cleared here at flight start. This is effectively
@@ -4462,7 +4470,7 @@ ${dotsInner}
     } else if (!S.diagnostics) {
       // Continuation but diagnostics were never generated (shouldn't
       // happen but covered defensively) — regenerate without touching
-      // flightHistory.
+      // flightHistory or any phase-tracking state.
       S.diagnostics = generateDiagnostics();
     }
     recordFlightSample();
